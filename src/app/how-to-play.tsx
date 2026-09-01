@@ -8,20 +8,28 @@ import { Colors, Radius, Spacing } from '@/constants/theme';
 
 const STEPS = [
   {
-    title: 'Everyone joins the same room',
-    body: 'The host shares a four-letter code. Five to ten players per room.',
+    title: 'You get matched with strangers',
+    body: 'Tap find a game and the matchmaker seats you in a chatroom with five people you have never met. Nothing to create, nobody to invite.',
   },
   {
     title: 'One of them is not a person',
-    body: 'Every round the group gets a prompt and talks it out in the chat. One participant is a model pretending to be one of you.',
+    body: 'The room gets a prompt and answers it one at a time. One participant is a model pretending to be one of you.',
   },
   {
-    title: 'Talk, then vote',
-    body: 'When the timer runs out everyone locks in a vote for who they think is the impostor. Nobody sees the tally until voting closes.',
+    title: 'Three goes each, a minute at a time',
+    body: 'Talk goes round the room three times on the same prompt, so you can react to what people said. Each turn gives you sixty seconds — the only clock in the game. Run out and that turn passes empty.',
+  },
+  {
+    title: 'Then the room votes',
+    body: 'Once everyone has answered you all vote for who you think the impostor is. The most-voted player is out. A tie removes nobody.',
+  },
+  {
+    title: 'It runs until someone wins',
+    body: 'There is no set number of rounds. Vote the impostor out and the humans win. Let it whittle you down to one human and it wins instead.',
   },
   {
     title: 'Nobody has to lie',
-    body: 'Unlike other social deduction games, every human here is just being themselves. The only liar in the room is the machine.',
+    body: 'Unlike other social deduction games, every human here is a stranger just being themselves. The only liar in the room is the machine.',
   },
 ];
 

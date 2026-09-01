@@ -1,7 +1,11 @@
 /**
- * Local-only room state. Every action here is synchronous and in-memory; the
+ * Local-only session state. Every action here is synchronous and in-memory; the
  * intent is that the same surface later gets wired to a realtime backend
  * without the screens changing.
+ *
+ * The match loop: everyone still in answers the prompt in turn (one minute
+ * each), everyone votes, the most-voted player is removed. Repeat until the
+ * impostor is caught or it has outlasted all but one human.
  */
 
 import {
@@ -13,23 +17,27 @@ import {
   type PropsWithChildren,
 } from 'react';
 
-import { makeId, mockOpeningChat, mockPlayers, PROMPTS, systemMessage } from './mock';
-import { DEFAULT_SETTINGS, YOU_ID, type Phase, type Room, type RoomSettings } from './types';
+import { makeId, shuffledPrompts } from './mock';
+import {
+  currentTurnId,
+  DEFAULT_SETTINGS,
+  humansAlive,
+  votedOutId,
+  YOU_ID,
+  type Outcome,
+  type Player,
+  type Room,
+} from './types';
 
 type Action =
-  | { type: 'createRoom'; code: string; name: string }
-  | { type: 'joinRoom'; code: string; name: string }
-  | { type: 'leaveRoom' }
-  | { type: 'setSettings'; settings: Partial<RoomSettings> }
-  | { type: 'setName'; name: string }
-  | { type: 'toggleReady' }
-  | { type: 'startGame' }
-  | { type: 'sendMessage'; text: string }
-  | { type: 'openVote' }
-  | { type: 'castVote'; targetId: string }
-  | { type: 'reveal' }
+  | { type: 'startMatch'; id: string; name: string; strangers: Player[] }
+  | { type: 'answerTurn'; text: string; timedOut: boolean }
+  | { type: 'castVote'; targetId: string | null }
+  | { type: 'resolveVote' }
   | { type: 'nextRound' }
-  | { type: 'backToLobby' };
+  | { type: 'spectate' }
+  | { type: 'leaveRoom' }
+  | { type: 'setName'; name: string };
 
 type State = {
   displayName: string;
@@ -45,55 +53,83 @@ function secondsFromNow(seconds: number) {
   return Date.now() + seconds * 1000;
 }
 
-function phaseDeadline(phase: Phase, settings: RoomSettings) {
-  if (phase === 'chat') return secondsFromNow(settings.chatSeconds);
-  if (phase === 'voting') return secondsFromNow(settings.voteSeconds);
-  return null;
+function pickPrompt(prompts: string[], round: number) {
+  return prompts[(round - 1) % prompts.length];
 }
 
-function newRoom(code: string, name: string, youAreHost: boolean): Room {
-  const you = {
+/**
+ * Who answers, in what order, this round. Rotated by round so the same player
+ * isn't always stuck going first with nothing to react to, then repeated once
+ * per pass so everyone gets several goes at the same prompt.
+ */
+function turnOrderFor(players: Player[], round: number, turnsEach: number) {
+  const alive = players.filter((p) => !p.eliminated).map((p) => p.id);
+  if (alive.length === 0) return [];
+  const start = (round - 1) % alive.length;
+  const rotated = [...alive.slice(start), ...alive.slice(0, start)];
+  return Array.from({ length: turnsEach }, () => rotated).flat();
+}
+
+/**
+ * Seats you among the strangers the matchmaker found and opens round one. The
+ * impostor is drawn here purely so the shell can reveal *someone* at the end —
+ * real selection happens server-side and never reaches the client early.
+ */
+function matchedRoom(id: string, name: string, strangers: Player[]): Room {
+  const you: Player = {
     id: YOU_ID,
     name: name || 'You',
-    isHost: youAreHost,
     isYou: true,
-    isReady: youAreHost,
     connected: true,
+    eliminated: false,
   };
-  const others = mockPlayers(youAreHost ? 4 : 5, youAreHost);
+
+  // Your seat is random so you aren't always the first name in the room.
+  const players = [...strangers];
+  players.splice(Math.floor(Math.random() * (players.length + 1)), 0, you);
+
+  const impostor = strangers[Math.floor(Math.random() * strangers.length)];
+  const prompts = shuffledPrompts();
 
   return {
-    code,
-    phase: 'lobby',
-    round: 0,
-    players: youAreHost ? [you, ...others] : [...others, you],
-    messages: [systemMessage(`Room ${code} created. Waiting for players.`)],
-    prompt: null,
+    id,
+    phase: 'answering',
+    round: 1,
+    players,
+    answers: [],
+    turnOrder: turnOrderFor(players, 1, DEFAULT_SETTINGS.turnsEach),
+    turnIndex: 0,
+    turnEndsAt: secondsFromNow(DEFAULT_SETTINGS.answerSeconds),
+    prompt: pickPrompt(prompts, 1),
+    prompts,
     votes: {},
-    settings: DEFAULT_SETTINGS,
-    impostorId: null,
-    phaseEndsAt: null,
+    eliminatedId: null,
+    outcome: null,
+    spectating: false,
+    impostorId: impostor?.id ?? null,
+    settings: { ...DEFAULT_SETTINGS, playerCount: players.length },
   };
 }
 
-function pickPrompt(round: number) {
-  return PROMPTS[round % PROMPTS.length];
+/**
+ * Decides the match after a vote resolves. Catching the impostor ends it
+ * immediately; otherwise the impostor wins the moment it is down to one human,
+ * because a lone human can always be outvoted.
+ */
+function outcomeFor(room: Room, eliminatedId: string | null): Outcome | null {
+  if (eliminatedId && eliminatedId === room.impostorId) return 'humans';
+  if (humansAlive(room) <= 1) return 'impostor';
+  return null;
 }
 
 function reducer(state: State, action: Action): State {
   const { room } = state;
 
   switch (action.type) {
-    case 'createRoom':
+    case 'startMatch':
       return {
         displayName: action.name,
-        room: newRoom(action.code.toUpperCase(), action.name, true),
-      };
-
-    case 'joinRoom':
-      return {
-        displayName: action.name,
-        room: newRoom(action.code.toUpperCase(), action.name, false),
+        room: matchedRoom(action.id, action.name, action.strangers),
       };
 
     case 'leaveRoom':
@@ -110,98 +146,69 @@ function reducer(state: State, action: Action): State {
       };
     }
 
-    case 'setSettings':
-      if (!room) return state;
-      return { ...state, room: { ...room, settings: { ...room.settings, ...action.settings } } };
+    case 'answerTurn': {
+      if (!room || room.phase !== 'answering') return state;
+      const speakerId = currentTurnId(room);
+      if (!speakerId) return state;
 
-    case 'toggleReady':
-      if (!room) return state;
-      return {
-        ...state,
-        room: {
-          ...room,
-          players: room.players.map((p) => (p.isYou ? { ...p, isReady: !p.isReady } : p)),
+      const answers = [
+        ...room.answers,
+        {
+          id: makeId('ans'),
+          playerId: speakerId,
+          text: action.text.trim(),
+          timedOut: action.timedOut,
+          createdAt: Date.now(),
         },
-      };
+      ];
 
-    case 'startGame': {
-      if (!room) return state;
-      // The impostor is picked at random here purely so the shell can reveal
-      // *someone* at the end. Real selection happens server-side.
-      const candidates = room.players.filter((p) => !p.isYou);
-      const impostor = candidates[Math.floor(Math.random() * candidates.length)];
-      const prompt = pickPrompt(0);
+      const turnIndex = room.turnIndex + 1;
+      const everyoneAnswered = turnIndex >= room.turnOrder.length;
 
       return {
         ...state,
         room: {
           ...room,
-          phase: 'chat',
-          round: 1,
-          prompt,
-          votes: {},
-          impostorId: impostor?.id ?? null,
-          phaseEndsAt: phaseDeadline('chat', room.settings),
-          messages: [
-            systemMessage(`Round 1 of ${room.settings.rounds}. One of you is not a person.`),
-            ...mockOpeningChat(room.players),
-          ],
+          answers,
+          turnIndex,
+          phase: everyoneAnswered ? 'voting' : 'answering',
+          turnEndsAt: everyoneAnswered ? null : secondsFromNow(room.settings.answerSeconds),
         },
       };
     }
-
-    case 'sendMessage': {
-      if (!room) return state;
-      const text = action.text.trim();
-      if (!text) return state;
-      return {
-        ...state,
-        room: {
-          ...room,
-          messages: [
-            ...room.messages,
-            {
-              id: makeId('msg'),
-              kind: 'chat',
-              playerId: YOU_ID,
-              text,
-              createdAt: Date.now(),
-            },
-          ],
-        },
-      };
-    }
-
-    case 'openVote':
-      if (!room) return state;
-      return {
-        ...state,
-        room: {
-          ...room,
-          phase: 'voting',
-          votes: {},
-          phaseEndsAt: phaseDeadline('voting', room.settings),
-        },
-      };
 
     case 'castVote': {
       if (!room) return state;
-      // Stand-in for other players' votes so the tally isn't empty.
-      const others: Record<string, string> = {};
-      const targets = room.players.map((p) => p.id);
-      for (const player of room.players) {
-        if (player.isYou) continue;
-        others[player.id] = targets[Math.floor(Math.random() * targets.length)];
+      // Stand-in for the other players' votes so the tally isn't empty. A null
+      // target means you are out and only the survivors are voting.
+      const alive = room.players.filter((p) => !p.eliminated);
+      const votes: Record<string, string> = {};
+      for (const voter of alive) {
+        if (voter.isYou) continue;
+        const targets = alive.filter((t) => t.id !== voter.id);
+        votes[voter.id] = targets[Math.floor(Math.random() * targets.length)].id;
       }
-      return {
-        ...state,
-        room: { ...room, votes: { ...others, [YOU_ID]: action.targetId } },
-      };
+      if (action.targetId) votes[YOU_ID] = action.targetId;
+
+      return { ...state, room: { ...room, votes } };
     }
 
-    case 'reveal':
+    case 'resolveVote': {
       if (!room) return state;
-      return { ...state, room: { ...room, phase: 'results', phaseEndsAt: null } };
+      const eliminatedId = votedOutId(room);
+
+      const resolved: Room = {
+        ...room,
+        players: eliminatedId
+          ? room.players.map((p) => (p.id === eliminatedId ? { ...p, eliminated: true } : p))
+          : room.players,
+        eliminatedId,
+        phase: 'verdict',
+        turnEndsAt: null,
+      };
+
+      return { ...state, room: { ...resolved, outcome: outcomeFor(resolved, eliminatedId) } };
+    }
 
     case 'nextRound': {
       if (!room) return state;
@@ -210,51 +217,34 @@ function reducer(state: State, action: Action): State {
         ...state,
         room: {
           ...room,
-          phase: 'chat',
+          phase: 'answering',
           round,
-          prompt: pickPrompt(round - 1),
+          prompt: pickPrompt(room.prompts, round),
+          answers: [],
           votes: {},
-          phaseEndsAt: phaseDeadline('chat', room.settings),
-          messages: [
-            ...room.messages,
-            systemMessage(`Round ${round} of ${room.settings.rounds}.`),
-          ],
+          eliminatedId: null,
+          turnOrder: turnOrderFor(room.players, round, room.settings.turnsEach),
+          turnIndex: 0,
+          turnEndsAt: secondsFromNow(room.settings.answerSeconds),
         },
       };
     }
 
-    case 'backToLobby':
+    case 'spectate':
       if (!room) return state;
-      return {
-        ...state,
-        room: {
-          ...room,
-          phase: 'lobby',
-          round: 0,
-          prompt: null,
-          votes: {},
-          impostorId: null,
-          phaseEndsAt: null,
-          messages: [systemMessage('Back in the lobby.')],
-        },
-      };
+      return { ...state, room: { ...room, spectating: true } };
   }
 }
 
 type RoomContextValue = State & {
-  createRoom: (code: string, name: string) => void;
-  joinRoom: (code: string, name: string) => void;
+  startMatch: (id: string, name: string, strangers: Player[]) => void;
+  answerTurn: (text: string, timedOut: boolean) => void;
+  castVote: (targetId: string | null) => void;
+  resolveVote: () => void;
+  nextRound: () => void;
+  spectate: () => void;
   leaveRoom: () => void;
   setName: (name: string) => void;
-  setSettings: (settings: Partial<RoomSettings>) => void;
-  toggleReady: () => void;
-  startGame: () => void;
-  sendMessage: (text: string) => void;
-  openVote: () => void;
-  castVote: (targetId: string) => void;
-  reveal: () => void;
-  nextRound: () => void;
-  backToLobby: () => void;
 };
 
 const RoomContext = createContext<RoomContextValue | null>(null);
@@ -262,61 +252,47 @@ const RoomContext = createContext<RoomContextValue | null>(null);
 export function RoomProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const createRoom = useCallback(
-    (code: string, name: string) => dispatch({ type: 'createRoom', code, name }),
+  const startMatch = useCallback(
+    (id: string, name: string, strangers: Player[]) =>
+      dispatch({ type: 'startMatch', id, name, strangers }),
     []
   );
-  const joinRoom = useCallback(
-    (code: string, name: string) => dispatch({ type: 'joinRoom', code, name }),
+  const answerTurn = useCallback(
+    (text: string, timedOut: boolean) => dispatch({ type: 'answerTurn', text, timedOut }),
     []
   );
+  const castVote = useCallback(
+    (targetId: string | null) => dispatch({ type: 'castVote', targetId }),
+    []
+  );
+  const resolveVote = useCallback(() => dispatch({ type: 'resolveVote' }), []);
+  const nextRound = useCallback(() => dispatch({ type: 'nextRound' }), []);
+  const spectate = useCallback(() => dispatch({ type: 'spectate' }), []);
   const leaveRoom = useCallback(() => dispatch({ type: 'leaveRoom' }), []);
   const setName = useCallback((name: string) => dispatch({ type: 'setName', name }), []);
-  const setSettings = useCallback(
-    (settings: Partial<RoomSettings>) => dispatch({ type: 'setSettings', settings }),
-    []
-  );
-  const toggleReady = useCallback(() => dispatch({ type: 'toggleReady' }), []);
-  const startGame = useCallback(() => dispatch({ type: 'startGame' }), []);
-  const sendMessage = useCallback((text: string) => dispatch({ type: 'sendMessage', text }), []);
-  const openVote = useCallback(() => dispatch({ type: 'openVote' }), []);
-  const castVote = useCallback((targetId: string) => dispatch({ type: 'castVote', targetId }), []);
-  const reveal = useCallback(() => dispatch({ type: 'reveal' }), []);
-  const nextRound = useCallback(() => dispatch({ type: 'nextRound' }), []);
-  const backToLobby = useCallback(() => dispatch({ type: 'backToLobby' }), []);
 
   const value = useMemo(
     () => ({
       ...state,
-      createRoom,
-      joinRoom,
+      startMatch,
+      answerTurn,
+      castVote,
+      resolveVote,
+      nextRound,
+      spectate,
       leaveRoom,
       setName,
-      setSettings,
-      toggleReady,
-      startGame,
-      sendMessage,
-      openVote,
-      castVote,
-      reveal,
-      nextRound,
-      backToLobby,
     }),
     [
       state,
-      createRoom,
-      joinRoom,
+      startMatch,
+      answerTurn,
+      castVote,
+      resolveVote,
+      nextRound,
+      spectate,
       leaveRoom,
       setName,
-      setSettings,
-      toggleReady,
-      startGame,
-      sendMessage,
-      openVote,
-      castVote,
-      reveal,
-      nextRound,
-      backToLobby,
     ]
   );
 
@@ -332,7 +308,7 @@ export function useRoomStore() {
 }
 
 /**
- * For screens under `/room/[code]` that cannot render without a room. Returns
+ * For screens under `/room/[id]` that cannot render without a room. Returns
  * null while the room is missing so the screen can redirect home.
  */
 export function useRoom() {

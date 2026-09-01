@@ -6,19 +6,24 @@ import { formatClock } from '@/hooks/use-countdown';
 
 type RoundBarProps = {
   round: number;
-  totalRounds: number;
-  prompt: string | null;
-  /** Seconds left in the phase, or null when untimed. */
+  /** Which time round the room this is, 1-based. */
+  turn: number;
+  /** How many times each player speaks per round. */
+  turnsEach: number;
+  prompt: string;
+  /** Seconds left in the current turn, or null when nobody is on the clock. */
   remaining: number | null;
-  /** Total seconds in the phase, used to size the progress track. */
+  /** Seconds a turn gets, used to size the progress track. */
   duration: number;
+  /** Right-hand caption, e.g. whose turn it is. */
+  status?: string;
 };
 
 /**
- * Sticky context strip above the chat: which round it is, the prompt everyone
- * is answering, and how long is left.
+ * Sticky context strip above the answers: which round it is, the prompt
+ * everyone is answering, and how long the player on the clock has left.
  */
-export function RoundBar({ round, totalRounds, prompt, remaining, duration }: RoundBarProps) {
+export function RoundBar({ round, turn, turnsEach, prompt, remaining, duration, status }: RoundBarProps) {
   const progress = remaining === null || duration <= 0 ? 0 : remaining / duration;
   const urgent = remaining !== null && remaining <= 15;
 
@@ -26,7 +31,7 @@ export function RoundBar({ round, totalRounds, prompt, remaining, duration }: Ro
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <ThemedText type="label">
-          Round {round} / {totalRounds}
+          Round {round} · Turn {turn} of {turnsEach}
         </ThemedText>
         {remaining !== null ? (
           <ThemedText type="mono" themeColor={urgent ? 'danger' : 'textSecondary'}>
@@ -35,9 +40,13 @@ export function RoundBar({ round, totalRounds, prompt, remaining, duration }: Ro
         ) : null}
       </View>
 
-      {prompt ? (
-        <ThemedText type="bodyBold" style={styles.prompt}>
-          {prompt}
+      <ThemedText type="bodyBold" style={styles.prompt}>
+        {prompt}
+      </ThemedText>
+
+      {status ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          {status}
         </ThemedText>
       ) : null}
 

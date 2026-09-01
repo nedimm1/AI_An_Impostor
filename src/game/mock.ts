@@ -1,10 +1,15 @@
 /**
  * Placeholder content so the shell is walkable end to end. Everything here gets
- * replaced once rooms are backed by a server and the impostor is a model.
+ * replaced once matchmaking is backed by a server and the impostor is a model.
  */
 
-import type { Message, Player } from './types';
+import type { Player } from './types';
 
+/**
+ * Prompts have to be answerable off the top of your head — a turn is sixty
+ * seconds and everyone answers three times, so anything that needs real
+ * thinking stalls the room.
+ */
 export const PROMPTS = [
   'What is the most overrated food, and why are you right?',
   'Describe the last time you were genuinely embarrassed.',
@@ -14,60 +19,83 @@ export const PROMPTS = [
   'Name something everyone likes that you secretly hate.',
 ];
 
-const BOT_NAMES = ['Mara', 'Deniz', 'Kofi', 'Sasha', 'Jonas', 'Priya', 'Emil'];
-
-export function makeRoomCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  let code = '';
-  for (let i = 0; i < 4; i++) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return code;
+/**
+ * A fresh order of prompts for one match, so two games never open on the same
+ * question. Drawn once when the room is seated.
+ */
+export function shuffledPrompts() {
+  return [...PROMPTS].sort(() => Math.random() - 0.5);
 }
+
+/** Stand-ins for the strangers the matchmaker seats you with. */
+const STRANGER_NAMES = [
+  'Mara',
+  'Deniz',
+  'Kofi',
+  'Sasha',
+  'Jonas',
+  'Priya',
+  'Emil',
+  'Nadia',
+  'Tomas',
+  'Ines',
+  'Rune',
+  'Ayla',
+];
+
+/**
+ * Filler answers. Deliberately vague — they have to read as plausible for any
+ * prompt until a model is actually writing the impostor's turns.
+ */
+const STOCK_ANSWERS = [
+  'honestly I had to think about this one for way too long',
+  'my sister would say I am wrong about this but I stand by it',
+  'ok this is going to make me sound insufferable but here goes',
+  'I have a very specific memory attached to this and I hate it',
+  'skipping the long version, short version is yes',
+  'genuinely cannot answer this without starting an argument',
+  'I changed my mind twice while typing this',
+  'the boring answer is the true one here',
+  'everyone I know disagrees with me and they are all wrong',
+  'giving the answer I gave at 14 because nothing has improved',
+  'I typed something else first and deleted it, take that as you will',
+  'no notes, no elaboration, that is the answer',
+];
 
 export function makeId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Fills a lobby with stand-in players so the layout has something to show. */
-export function mockPlayers(count: number, hostIsYou: boolean): Player[] {
-  const names = [...BOT_NAMES].sort(() => Math.random() - 0.5).slice(0, count);
-  return names.map((name, i) => ({
-    id: `bot_${name.toLowerCase()}`,
+/** Opaque session id. Nobody reads this out loud — it is not a room code. */
+export function makeSessionId() {
+  return makeId('rm');
+}
+
+/**
+ * The strangers for one match. Names are drawn without repeats so the room
+ * doesn't seat two people with the same handle.
+ */
+export function mockStrangers(count: number): Player[] {
+  const names = [...STRANGER_NAMES].sort(() => Math.random() - 0.5).slice(0, count);
+  return names.map((name) => ({
+    id: `p_${name.toLowerCase()}`,
     name,
-    isHost: !hostIsYou && i === 0,
     isYou: false,
-    isReady: Math.random() > 0.35,
     connected: true,
+    eliminated: false,
   }));
 }
 
-export function systemMessage(text: string): Message {
-  return {
-    id: makeId('sys'),
-    kind: 'system',
-    playerId: '',
-    text,
-    createdAt: Date.now(),
-  };
-}
+let lastAnswerIndex = -1;
 
-const OPENERS = [
-  'ok whoever answers first is instantly sus',
-  'genuinely the worst prompt so far',
-  'im typing slow on purpose btw',
-  'we did this exact one last game lol',
-  'nobody say anything for 10 seconds',
-];
-
-/** A couple of seeded lines so an empty chat doesn't look broken. */
-export function mockOpeningChat(players: Player[]): Message[] {
-  const others = players.filter((p) => !p.isYou);
-  return others.slice(0, 3).map((p, i) => ({
-    id: makeId('msg'),
-    kind: 'chat' as const,
-    playerId: p.id,
-    text: OPENERS[i % OPENERS.length],
-    createdAt: Date.now() + i,
-  }));
+/**
+ * What a stand-in player types when their turn comes round. Never repeats the
+ * line it just used — a round holds a dozen-plus of these and duplicates
+ * back to back read as a bug rather than as filler.
+ */
+export function mockAnswer() {
+  let index = Math.floor(Math.random() * STOCK_ANSWERS.length);
+  if (index === lastAnswerIndex) index = (index + 1) % STOCK_ANSWERS.length;
+  lastAnswerIndex = index;
+  return STOCK_ANSWERS[index];
 }

@@ -32,11 +32,11 @@ export default function RootLayout() {
               animation: 'slide_from_right',
             }}>
             <Stack.Screen name="index" />
-            <Stack.Screen name="create" options={modalOptions} />
-            <Stack.Screen name="join" options={modalOptions} />
+            <Stack.Screen name="name" options={modalOptions} />
+            <Stack.Screen name="queue" options={{ gestureEnabled: false }} />
             <Stack.Screen name="how-to-play" options={modalOptions} />
             <Stack.Screen name="settings" options={modalOptions} />
-            <Stack.Screen name="room/[code]" />
+            <Stack.Screen name="room/[id]" />
           </Stack>
         </RoomProvider>
       </ThemeProvider>

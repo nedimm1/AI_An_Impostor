@@ -7,63 +7,62 @@ import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Pill } from '@/components/ui/pill';
 import { Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
-import { voteTally, YOU_ID } from '@/game/types';
-import { formatClock, useCountdown } from '@/hooks/use-countdown';
+import { survivors, voteTally, YOU_ID, youAreOut } from '@/game/types';
+import { useLeaveGame } from '@/hooks/use-leave-game';
 
+/**
+ * The vote that closes a round. Untimed on purpose — the only clock in this
+ * game is the minute each player gets to answer.
+ */
 export default function VoteScreen() {
   const router = useRouter();
-  const { room, castVote, reveal } = useRoomStore();
+  const { room, castVote, resolveVote } = useRoomStore();
   const [selected, setSelected] = useState<string | null>(null);
+  const handleLeave = useLeaveGame();
 
-  const phase = room?.phase;
-  const code = room?.code;
+  const id = room?.id;
 
-  const goToResults = useCallback(() => {
-    if (!code) return;
-    reveal();
-    router.replace({ pathname: '/room/[code]/results', params: { code } });
-  }, [code, reveal, router]);
-
-  const onTimeUp = useCallback(() => {
-    if (phase === 'voting') goToResults();
-  }, [phase, goToResults]);
-
-  const remaining = useCountdown(room?.phaseEndsAt ?? null, onTimeUp);
+  const goToVerdict = useCallback(() => {
+    if (!id) return;
+    resolveVote();
+    router.replace({ pathname: '/room/[id]/results', params: { id } });
+  }, [id, resolveVote, router]);
 
   if (!room) return <Redirect href="/" />;
 
-  const hasVoted = room.votes[YOU_ID] !== undefined;
+  const out = youAreOut(room);
+  const alive = survivors(room);
+  const votesIn = Object.keys(room.votes).length > 0;
   const tally = voteTally(room);
 
   return (
     <Screen>
       <ScreenHeader
+        onBack={handleLeave}
         title="Who is the impostor?"
-        subtitle={hasVoted ? 'Votes are in' : 'Pick one player'}
-        right={
-          remaining !== null ? (
-            <Pill label={formatClock(remaining)} tone={remaining <= 10 ? 'danger' : 'neutral'} />
-          ) : undefined
+        subtitle={
+          out
+            ? 'You are out — the room votes without you'
+            : votesIn
+              ? 'Votes are in'
+              : `Pick one of the ${alive.length} still in`
         }
       />
 
-      {room.prompt ? (
-        <ThemedText type="small" themeColor="textMuted" style={styles.prompt}>
-          Round {room.round}: {room.prompt}
-        </ThemedText>
-      ) : null}
+      <ThemedText type="small" themeColor="textMuted" style={styles.prompt}>
+        Round {room.round}: {room.prompt}
+      </ThemedText>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {room.players.map((player) => (
+        {alive.map((player) => (
           <VoteRow
             key={player.id}
             player={player}
-            selected={hasVoted ? room.votes[YOU_ID] === player.id : selected === player.id}
-            voteCount={hasVoted ? (tally[player.id] ?? 0) : undefined}
-            disabled={player.isYou || hasVoted}
+            selected={votesIn ? room.votes[YOU_ID] === player.id : selected === player.id}
+            voteCount={votesIn ? (tally[player.id] ?? 0) : undefined}
+            disabled={player.isYou || votesIn || out}
             dimmed={player.isYou}
             onPress={() => setSelected(player.id)}
           />
@@ -71,8 +70,10 @@ export default function VoteScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        {hasVoted ? (
-          <Button label="See the reveal" onPress={goToResults} />
+        {votesIn ? (
+          <Button label="See the result" onPress={goToVerdict} />
+        ) : out ? (
+          <Button label="Watch the vote" onPress={() => castVote(null)} />
         ) : (
           <Button
             label="Lock in vote"
@@ -81,7 +82,11 @@ export default function VoteScreen() {
           />
         )}
         <ThemedText type="small" themeColor="textMuted" style={styles.note}>
-          {hasVoted ? 'You cannot change your vote.' : 'Nobody sees the tally until you lock in.'}
+          {votesIn
+            ? 'You cannot change your vote.'
+            : out
+              ? 'Eliminated players do not get a vote.'
+              : 'Nobody sees the tally until you lock in.'}
         </ThemedText>
       </View>
     </Screen>

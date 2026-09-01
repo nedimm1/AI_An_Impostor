@@ -10,7 +10,7 @@ type ComposerProps = {
   placeholder?: string;
 };
 
-export function Composer({ onSend, disabled, placeholder = 'Say something…' }: ComposerProps) {
+export function Composer({ onSend, disabled, placeholder = 'Type your answer…' }: ComposerProps) {
   const [text, setText] = useState('');
   const canSend = text.trim().length > 0 && !disabled;
 
@@ -25,7 +25,7 @@ export function Composer({ onSend, disabled, placeholder = 'Say something…' }:
       <TextInput
         value={text}
         onChangeText={setText}
-        placeholder={disabled ? 'Chat is closed' : placeholder}
+        placeholder={placeholder}
         placeholderTextColor={Colors.textMuted}
         selectionColor={Colors.accent}
         keyboardAppearance="dark"

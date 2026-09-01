@@ -1,73 +1,88 @@
 /**
  * Shape of a game session. This is deliberately transport-agnostic — right now
  * it lives in local React state (see `store.tsx`), later it gets backed by a
- * realtime server.
+ * realtime server and a real matchmaker.
+ *
+ * The match is a loop, not a fixed number of rounds: everyone answers a prompt
+ * in turn, everyone votes, one player is removed, and it repeats until one side
+ * wins.
  */
 
-export type Phase = 'lobby' | 'chat' | 'voting' | 'results';
+export type Phase = 'answering' | 'voting' | 'verdict';
 
 export type Player = {
   id: string;
   name: string;
-  isHost: boolean;
   /** True for the player using this device. */
   isYou: boolean;
-  isReady: boolean;
   connected: boolean;
+  /** Voted out. Still listed, but out of the turn order and the vote. */
+  eliminated: boolean;
 };
 
-export type MessageKind = 'chat' | 'system';
-
-export type Message = {
+export type Answer = {
   id: string;
-  kind: MessageKind;
-  /** Empty for system messages. */
   playerId: string;
   text: string;
+  /** True when the minute ran out before they wrote anything. */
+  timedOut: boolean;
   createdAt: number;
 };
 
-export type Difficulty = 'easy' | 'normal' | 'hard';
+/** Who won. `humans` = the impostor was voted out; `impostor` = it outlasted them. */
+export type Outcome = 'humans' | 'impostor';
 
-export type RoomSettings = {
-  maxPlayers: number;
-  rounds: number;
-  /** Seconds of open chat per round. */
-  chatSeconds: number;
-  /** Seconds to lock in a vote. */
-  voteSeconds: number;
-  /** Placeholder for game modes — swapped out when modes land. */
-  topic: string;
-  difficulty: Difficulty;
+/** Decided by the matchmaker, not by a player. Nobody in the room hosts it. */
+export type MatchSettings = {
+  /** How many people the matchmaker seats, you included. */
+  playerCount: number;
+  /** Seconds each player gets to write their answer. The only clock in the game. */
+  answerSeconds: number;
+  /** How many times each player speaks per round, going round the room each time. */
+  turnsEach: number;
 };
 
 export type Room = {
-  code: string;
+  /**
+   * Opaque session id from the matchmaker. Not a code anyone types or shares —
+   * you reach a room by being matched into it.
+   */
+  id: string;
   phase: Phase;
   round: number;
   players: Player[];
-  messages: Message[];
-  /** The question the round is built around. Null in the lobby. */
-  prompt: string | null;
+  /** Answers to the current round's prompt, in the order they were given. */
+  answers: Answer[];
+  /** Ids of everyone still in, in the order they answer this round. */
+  turnOrder: string[];
+  /** Index into `turnOrder`. Equals its length once everyone has answered. */
+  turnIndex: number;
+  /** Epoch ms the current turn expires, or null between turns. */
+  turnEndsAt: number | null;
+  /** The question this round is built around. */
+  prompt: string;
+  /** This match's prompt order, drawn when the room was seated. */
+  prompts: string[];
   /** voterId -> targetId */
   votes: Record<string, string>;
-  settings: RoomSettings;
+  /** Who the round's vote removed, or null on a tie. */
+  eliminatedId: string | null;
+  /** Set once the match is decided; null while it is still running. */
+  outcome: Outcome | null;
+  /** You were voted out and chose to keep watching rather than leave. */
+  spectating: boolean;
   /**
-   * Who the impostor is. Held back from the UI until `phase === 'results'`.
+   * Who the impostor is. Held back from the UI until the match is decided.
    * A real build keeps this server-side until the reveal.
    */
   impostorId: string | null;
-  /** Epoch ms the current phase auto-advances, or null for untimed phases. */
-  phaseEndsAt: number | null;
+  settings: MatchSettings;
 };
 
-export const DEFAULT_SETTINGS: RoomSettings = {
-  maxPlayers: 8,
-  rounds: 3,
-  chatSeconds: 180,
-  voteSeconds: 45,
-  topic: 'Mixed',
-  difficulty: 'normal',
+export const DEFAULT_SETTINGS: MatchSettings = {
+  playerCount: 6,
+  answerSeconds: 60,
+  turnsEach: 3,
 };
 
 export const YOU_ID = 'you';
@@ -75,6 +90,43 @@ export const YOU_ID = 'you';
 export function playerById(room: Room, id: string | null | undefined) {
   if (!id) return undefined;
   return room.players.find((p) => p.id === id);
+}
+
+/** Everyone still in the game. */
+export function survivors(room: Room) {
+  return room.players.filter((p) => !p.eliminated);
+}
+
+/**
+ * Survivors who are not the impostor. The match ends the moment this drops to
+ * one: a lone human against the impostor can always be outvoted.
+ */
+export function humansAlive(room: Room) {
+  return survivors(room).filter((p) => p.id !== room.impostorId).length;
+}
+
+/** Whose turn it is to answer, or null once the round's answers are all in. */
+export function currentTurnId(room: Room) {
+  return room.turnOrder[room.turnIndex] ?? null;
+}
+
+/**
+ * Which time round the room the current turn is, 1-based. Everyone is on the
+ * same pass, since turns go round the table rather than stacking per player.
+ */
+export function currentTurnNumber(room: Room) {
+  const seats = survivors(room).length;
+  if (seats === 0) return 1;
+  return Math.min(room.settings.turnsEach, Math.floor(room.turnIndex / seats) + 1);
+}
+
+export function isYourTurn(room: Room) {
+  return currentTurnId(room) === YOU_ID;
+}
+
+/** True when you are out of the game, whether watching or not. */
+export function youAreOut(room: Room) {
+  return playerById(room, YOU_ID)?.eliminated ?? false;
 }
 
 /** targetId -> number of votes cast against them. */
@@ -86,7 +138,10 @@ export function voteTally(room: Room) {
   return tally;
 }
 
-/** The most-voted player, or null on a tie or no votes. */
+/**
+ * The most-voted player, or null on a tie. A tie removes nobody and the match
+ * moves on to the next round.
+ */
 export function votedOutId(room: Room) {
   const tally = voteTally(room);
   const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);

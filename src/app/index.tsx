@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
+import { useRoomStore } from '@/game/store';
 
 /** Decorative lineup — five "players", one of which is unreadable. */
 const LINEUP = [
@@ -18,6 +19,11 @@ const LINEUP = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { displayName } = useRoomStore();
+
+  // The queue needs something to call you. Once you've picked a name it sticks,
+  // so returning players go straight into the search.
+  const handlePlay = () => router.push(displayName.trim() ? '/queue' : '/name');
 
   return (
     <Screen>
@@ -41,15 +47,14 @@ export default function HomeScreen() {
             An Impostor
           </ThemedText>
           <ThemedText type="body" themeColor="textSecondary" style={styles.tagline}>
-            Six people in a chatroom. One of them isn&apos;t a person. Find it before the rounds run
-            out.
+            You and five strangers in a chatroom. One of them isn&apos;t a person. Vote it out
+            before it outlasts you.
           </ThemedText>
         </View>
       </View>
 
       <View style={styles.actions}>
-        <Button label="Create a room" onPress={() => router.push('/create')} />
-        <Button label="Join with a code" variant="secondary" onPress={() => router.push('/join')} />
+        <Button label="Find a game" onPress={handlePlay} />
 
         <View style={styles.footerLinks}>
           <Link href="/how-to-play" asChild>

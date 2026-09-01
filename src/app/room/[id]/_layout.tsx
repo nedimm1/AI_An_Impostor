@@ -10,8 +10,7 @@ export default function RoomLayout() {
         contentStyle: { backgroundColor: Colors.background },
         animation: 'slide_from_right',
       }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="chat" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="round" options={{ gestureEnabled: false }} />
       <Stack.Screen
         name="vote"
         options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
