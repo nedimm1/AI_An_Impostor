@@ -24,8 +24,13 @@ export type Answer = {
   id: string;
   playerId: string;
   text: string;
-  /** True when the minute ran out before they wrote anything. */
+  /** True when the clock ran out before they wrote anything. */
   timedOut: boolean;
+  /**
+   * The answer this one is written at, or null when it stands alone. Only ever
+   * points inside the current round — answers are cleared between rounds.
+   */
+  replyToId: string | null;
   createdAt: number;
 };
 
@@ -81,8 +86,8 @@ export type Room = {
 
 export const DEFAULT_SETTINGS: MatchSettings = {
   playerCount: 6,
-  answerSeconds: 60,
-  turnsEach: 3,
+  answerSeconds: 45,
+  turnsEach: 5,
 };
 
 export const YOU_ID = 'you';
@@ -90,6 +95,12 @@ export const YOU_ID = 'you';
 export function playerById(room: Room, id: string | null | undefined) {
   if (!id) return undefined;
   return room.players.find((p) => p.id === id);
+}
+
+/** The answer a reply points at, if it is still on screen. */
+export function answerById(room: Room, id: string | null | undefined) {
+  if (!id) return undefined;
+  return room.answers.find((a) => a.id === id);
 }
 
 /** Everyone still in the game. */

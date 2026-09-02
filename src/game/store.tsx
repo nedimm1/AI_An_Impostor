@@ -3,7 +3,7 @@
  * intent is that the same surface later gets wired to a realtime backend
  * without the screens changing.
  *
- * The match loop: everyone still in answers the prompt in turn (one minute
+ * The match loop: everyone still in answers the prompt in turn (forty-five seconds
  * each), everyone votes, the most-voted player is removed. Repeat until the
  * impostor is caught or it has outlasted all but one human.
  */
@@ -31,7 +31,7 @@ import {
 
 type Action =
   | { type: 'startMatch'; id: string; name: string; strangers: Player[] }
-  | { type: 'answerTurn'; text: string; timedOut: boolean }
+  | { type: 'answerTurn'; text: string; timedOut: boolean; replyToId: string | null }
   | { type: 'castVote'; targetId: string | null }
   | { type: 'resolveVote' }
   | { type: 'nextRound' }
@@ -151,6 +151,13 @@ function reducer(state: State, action: Action): State {
       const speakerId = currentTurnId(room);
       if (!speakerId) return state;
 
+      // A reply only holds if its target is still on screen — ids from an
+      // earlier round point at answers that have already been cleared.
+      const replyToId =
+        !action.timedOut && room.answers.some((a) => a.id === action.replyToId)
+          ? action.replyToId
+          : null;
+
       const answers = [
         ...room.answers,
         {
@@ -158,6 +165,7 @@ function reducer(state: State, action: Action): State {
           playerId: speakerId,
           text: action.text.trim(),
           timedOut: action.timedOut,
+          replyToId,
           createdAt: Date.now(),
         },
       ];
@@ -238,7 +246,7 @@ function reducer(state: State, action: Action): State {
 
 type RoomContextValue = State & {
   startMatch: (id: string, name: string, strangers: Player[]) => void;
-  answerTurn: (text: string, timedOut: boolean) => void;
+  answerTurn: (text: string, timedOut: boolean, replyToId?: string | null) => void;
   castVote: (targetId: string | null) => void;
   resolveVote: () => void;
   nextRound: () => void;
@@ -258,7 +266,8 @@ export function RoomProvider({ children }: PropsWithChildren) {
     []
   );
   const answerTurn = useCallback(
-    (text: string, timedOut: boolean) => dispatch({ type: 'answerTurn', text, timedOut }),
+    (text: string, timedOut: boolean, replyToId: string | null = null) =>
+      dispatch({ type: 'answerTurn', text, timedOut, replyToId }),
     []
   );
   const castVote = useCallback(

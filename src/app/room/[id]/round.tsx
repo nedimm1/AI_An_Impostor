@@ -1,5 +1,5 @@
 import { Redirect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -11,14 +11,15 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AnswerBubble } from '@/components/game/answer-bubble';
-import { Composer } from '@/components/game/composer';
+import { Composer, type ComposerHandle } from '@/components/game/composer';
 import { RoundBar } from '@/components/game/round-bar';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
 import { useBotTurns } from '@/game/bots';
 import { useRoomStore } from '@/game/store';
 import {
+  answerById,
   currentTurnId,
   currentTurnNumber,
   isYourTurn,
@@ -30,7 +31,7 @@ import { useCountdown } from '@/hooks/use-countdown';
 import { useLeaveGame } from '@/hooks/use-leave-game';
 
 /**
- * One round of answers. Everyone still in gets the same prompt and a minute
+ * One round of answers. Everyone still in gets the same prompt and forty-five seconds
  * each, in turn. When the last answer lands the room goes to the vote.
  */
 export default function RoundScreen() {
@@ -38,11 +39,19 @@ export default function RoundScreen() {
   const { room, answerTurn } = useRoomStore();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
+  const composerRef = useRef<ComposerHandle>(null);
+
+  // The answer you are writing back at, picked by long-pressing its bubble.
+  const [replyToId, setReplyToId] = useState<string | null>(null);
 
   useBotTurns(room, answerTurn);
 
   const phase = room?.phase;
   const id = room?.id;
+  const round = room?.round;
+
+  // Answers are cleared between rounds, so a target from the last one is gone.
+  useEffect(() => setReplyToId(null), [round]);
 
   // Walking out is final — the matchmaker doesn't hold your seat and these
   // strangers are not a room you can find again.
@@ -55,19 +64,28 @@ export default function RoundScreen() {
     }
   }, [phase, id, router]);
 
-  // A turn that expires counts as an answer — an empty one.
+  const yourTurn = room ? isYourTurn(room) : false;
+  const out = room ? youAreOut(room) : false;
+
+  // A turn that expires still counts as an answer. Whatever you had typed goes
+  // to the room as it stands, half a sentence and all — only a box you never
+  // wrote in passes the turn empty.
   const onTimeUp = useCallback(() => {
-    if (phase === 'answering') answerTurn('', true);
-  }, [phase, answerTurn]);
+    if (phase !== 'answering') return;
+    const draft = yourTurn && !out ? (composerRef.current?.takeDraft() ?? '') : '';
+    answerTurn(draft, draft.trim().length === 0, replyToId);
+    setReplyToId(null);
+  }, [phase, yourTurn, out, answerTurn, replyToId]);
 
   const remaining = useCountdown(room?.turnEndsAt ?? null, onTimeUp);
 
   if (!room) return <Redirect href="/" />;
 
-  const yourTurn = isYourTurn(room);
-  const out = youAreOut(room);
   const speaker = playerById(room, currentTurnId(room));
   const stillIn = survivors(room).length;
+
+  const replyTarget = answerById(room, replyToId);
+  const replyAuthor = playerById(room, replyTarget?.playerId);
 
   const status = out
     ? 'You are out — watching'
@@ -123,6 +141,7 @@ export default function RoundScreen() {
         <FlatList
           ref={listRef}
           data={room.answers}
+          extraData={replyToId}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
@@ -133,15 +152,39 @@ export default function RoundScreen() {
               Nobody has answered yet.
             </ThemedText>
           }
-          renderItem={({ item }) => (
-            <AnswerBubble answer={item} author={playerById(room, item.playerId)} />
-          )}
+          renderItem={({ item }) => {
+            const quoted = answerById(room, item.replyToId);
+            return (
+              <AnswerBubble
+                answer={item}
+                author={playerById(room, item.playerId)}
+                replyTo={quoted}
+                replyToAuthor={playerById(room, quoted?.playerId)}
+                onReply={out ? undefined : () => setReplyToId(item.id)}
+                replySelected={item.id === replyToId}
+              />
+            );
+          }}
         />
 
         <Composer
-          onSend={(text) => answerTurn(text, false)}
+          ref={composerRef}
+          onSend={(text) => {
+            answerTurn(text, false, replyToId);
+            setReplyToId(null);
+          }}
           disabled={!yourTurn || out}
           placeholder={placeholder}
+          replyTo={
+            replyTarget && replyAuthor
+              ? {
+                  name: replyAuthor.isYou ? 'yourself' : replyAuthor.name,
+                  text: replyTarget.text,
+                  color: colorForId(replyAuthor.id),
+                }
+              : null
+          }
+          onCancelReply={() => setReplyToId(null)}
         />
         <View style={{ height: insets.bottom, backgroundColor: Colors.background }} />
       </KeyboardAvoidingView>

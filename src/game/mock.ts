@@ -3,21 +3,18 @@
  * replaced once matchmaking is backed by a server and the impostor is a model.
  */
 
+import promptList from './prompts.json';
 import type { Player } from './types';
 
 /**
- * Prompts have to be answerable off the top of your head — a turn is sixty
- * seconds and everyone answers three times, so anything that needs real
- * thinking stalls the room.
+ * Prompts have to be answerable off the top of your head — a turn is forty-five
+ * seconds and everyone answers five times, so anything that needs real thinking
+ * stalls the room. They are small and ordinary on purpose: an impostor gives
+ * itself away on the texture of an everyday answer, not on a hard one.
+ *
+ * The list lives in `prompts.json` so it can be added to without touching code.
  */
-export const PROMPTS = [
-  'What is the most overrated food, and why are you right?',
-  'Describe the last time you were genuinely embarrassed.',
-  'What is a hill you would actually die on?',
-  'What did you think you would be doing at this age?',
-  'What is the worst advice you have ever been given?',
-  'Name something everyone likes that you secretly hate.',
-];
+export const PROMPTS: string[] = promptList;
 
 /**
  * A fresh order of prompts for one match, so two games never open on the same

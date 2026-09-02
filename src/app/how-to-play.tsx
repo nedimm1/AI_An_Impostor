@@ -16,8 +16,8 @@ const STEPS = [
     body: 'The room gets a prompt and answers it one at a time. One participant is a model pretending to be one of you.',
   },
   {
-    title: 'Three goes each, a minute at a time',
-    body: 'Talk goes round the room three times on the same prompt, so you can react to what people said. Each turn gives you sixty seconds — the only clock in the game. Run out and that turn passes empty.',
+    title: 'Five goes each, forty-five seconds a turn',
+    body: 'Talk goes round the room five times on the same prompt, so you can react to what people said. Each turn gives you forty-five seconds — the only clock in the game. Run out and that turn passes empty.',
   },
   {
     title: 'Then the room votes',

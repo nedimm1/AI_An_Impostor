@@ -14,7 +14,7 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
 
 /**
  * The vote that closes a round. Untimed on purpose — the only clock in this
- * game is the minute each player gets to answer.
+ * game is the forty-five seconds each player gets to answer.
  */
 export default function VoteScreen() {
   const router = useRouter();
