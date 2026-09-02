@@ -8,8 +8,8 @@ import type { Player } from './types';
 
 /**
  * Prompts have to be answerable off the top of your head — a turn is forty-five
- * seconds and everyone answers five times, so anything that needs real thinking
- * stalls the room. They are small and ordinary on purpose: an impostor gives
+ * seconds and the room comes back to the same prompt several times, so anything
+ * that needs real thinking stalls it. They are small and ordinary on purpose: an impostor gives
  * itself away on the texture of an everyday answer, not on a hard one.
  *
  * The list lives in `prompts.json` so it can be added to without touching code.

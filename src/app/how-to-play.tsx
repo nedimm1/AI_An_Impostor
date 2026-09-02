@@ -5,6 +5,9 @@ import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Colors, Radius, Spacing } from '@/constants/theme';
+import { DEFAULT_SETTINGS } from '@/game/types';
+
+const { turnsEach, answerSeconds, tiebreakerTurns, tiebreakerTurnsAccused } = DEFAULT_SETTINGS;
 
 const STEPS = [
   {
@@ -16,16 +19,26 @@ const STEPS = [
     body: 'The room gets a prompt and answers it one at a time. One participant is a model pretending to be one of you.',
   },
   {
-    title: 'Five goes each, forty-five seconds a turn',
-    body: 'Talk goes round the room five times on the same prompt, so you can react to what people said. Each turn gives you forty-five seconds — the only clock in the game. Run out and that turn passes empty.',
+    title:
+      turnsEach === 1
+        ? `One go each, ${answerSeconds} seconds a turn`
+        : `${turnsEach} goes each, ${answerSeconds} seconds a turn`,
+    body:
+      turnsEach === 1
+        ? `Everyone answers the prompt once, in turn. You get ${answerSeconds} seconds — the only clock in the game. Run out and that turn passes empty.`
+        : `Talk goes round the room ${turnsEach} times on the same prompt, so you can react to what people said. Each turn gives you ${answerSeconds} seconds — the only clock in the game. Run out and that turn passes empty.`,
   },
   {
     title: 'Then the room votes',
-    body: 'Once everyone has answered you all vote for who you think the impostor is. The most-voted player is out. A tie removes nobody.',
+    body: 'Once everyone has answered you all vote for who you think the impostor is. The most-voted player is out.',
+  },
+  {
+    title: 'A tie means a tiebreaker',
+    body: `If the vote ties, the whole room talks it out. The players it tied on go first and get ${tiebreakerTurnsAccused} messages each; everyone else gets ${tiebreakerTurns}. Then the room votes again. It is usually one of them, but the ballot stays open — if you think they are both innocent you can still name somebody else. Tie again and nobody goes out — and a round nobody used is a round the impostor survived.`,
   },
   {
     title: 'It runs until someone wins',
-    body: 'There is no set number of rounds. Vote the impostor out and the humans win. Let it whittle you down to one human and it wins instead.',
+    body: 'Vote the impostor out and the humans win. Let it whittle you down to one human, or let it sit through every round uncaught, and it wins instead.',
   },
   {
     title: 'Nobody has to lie',

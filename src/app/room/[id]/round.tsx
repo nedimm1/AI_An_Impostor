@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AnswerBubble } from '@/components/game/answer-bubble';
 import { Composer, type ComposerHandle } from '@/components/game/composer';
 import { RoundBar } from '@/components/game/round-bar';
+import { VotePanel } from '@/components/game/vote-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
 import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
@@ -25,6 +26,10 @@ import {
   isYourTurn,
   playerById,
   survivors,
+  voteResult,
+  voteTally,
+  YOU_ID,
+  youAreAccused,
   youAreOut,
 } from '@/game/types';
 import { useCountdown } from '@/hooks/use-countdown';
@@ -36,13 +41,15 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function RoundScreen() {
   const router = useRouter();
-  const { room, answerTurn } = useRoomStore();
+  const { room, answerTurn, castVote, resolveVote } = useRoomStore();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
 
   // The answer you are writing back at, picked by long-pressing its bubble.
   const [replyToId, setReplyToId] = useState<string | null>(null);
+  // Who you are about to vote for, before you lock it in.
+  const [voteFor, setVoteFor] = useState<string | null>(null);
 
   useBotTurns(room, answerTurn);
 
@@ -52,15 +59,17 @@ export default function RoundScreen() {
 
   // Answers are cleared between rounds, so a target from the last one is gone.
   useEffect(() => setReplyToId(null), [round]);
+  useEffect(() => setVoteFor(null), [round, phase]);
 
   // Walking out is final — the matchmaker doesn't hold your seat and these
   // strangers are not a room you can find again.
   const handleLeave = useLeaveGame();
 
-  // The last answer flips the phase; the vote is a screen of its own.
+  // The vote happens here, under the chatroom. Only the verdict is its own
+  // screen, since by then there is nothing left to read back through.
   useEffect(() => {
-    if (phase === 'voting' && id) {
-      router.replace({ pathname: '/room/[id]/vote', params: { id } });
+    if (phase === 'verdict' && id) {
+      router.replace({ pathname: '/room/[id]/results', params: { id } });
     }
   }, [phase, id, router]);
 
@@ -82,23 +91,50 @@ export default function RoundScreen() {
   if (!room) return <Redirect href="/" />;
 
   const speaker = playerById(room, currentTurnId(room));
-  const stillIn = survivors(room).length;
+  const alive = survivors(room);
+  const stillIn = alive.length;
+
+  const voting = room.phase === 'voting';
+  const inTiebreaker = room.tiebreaker !== null;
+  const accused = youAreAccused(room);
+  const speakerAccused = speaker ? (room.tiebreaker?.includes(speaker.id) ?? false) : false;
+
+  const votesIn = Object.keys(room.votes).length > 0;
+  // A first tie opens a tiebreaker, not a result — say so on the button.
+  const opensTiebreaker = !inTiebreaker && votesIn && voteResult(room).kind === 'tied';
+  const accusedNames = (room.tiebreaker ?? [])
+    .map((tid) => playerById(room, tid)?.name ?? 'someone')
+    .join(' and ');
 
   const replyTarget = answerById(room, replyToId);
   const replyAuthor = playerById(room, replyTarget?.playerId);
 
-  const status = out
-    ? 'You are out — watching'
+  const status = voting
+    ? out
+      ? 'You are out — the room votes without you'
+      : 'Everyone has spoken. Read it back, then vote.'
+    : out
+      ? 'You are out — watching'
     : yourTurn
-      ? 'Your turn'
+      ? inTiebreaker
+        ? accused
+          ? 'Your turn — say why it is not you'
+          : 'Your turn — say what you make of it'
+        : 'Your turn'
       : speaker
-        ? `${speaker.name} is answering…`
-        : 'Everyone has answered';
+        ? inTiebreaker && speakerAccused
+          ? `${speaker.name} is making their case…`
+          : `${speaker.name} is answering…`
+        : 'Everyone has spoken';
 
   const placeholder = out
     ? 'You are out of the game'
     : yourTurn
-      ? 'Type your answer…'
+      ? inTiebreaker
+        ? accused
+          ? 'Why is it not you?'
+          : 'What do you make of it?'
+        : 'Type your answer…'
       : speaker
         ? `Waiting for ${speaker.name}…`
         : 'Waiting…';
@@ -130,8 +166,13 @@ export default function RoundScreen() {
 
         <RoundBar
           round={room.round}
-          turn={currentTurnNumber(room)}
-          turnsEach={room.settings.turnsEach}
+          turn={
+            inTiebreaker
+              ? Math.min(room.turnIndex + 1, room.turnOrder.length)
+              : currentTurnNumber(room)
+          }
+          turnsEach={inTiebreaker ? room.turnOrder.length : room.settings.turnsEach}
+          tiebreaker={inTiebreaker}
           prompt={room.prompt}
           remaining={remaining}
           duration={room.settings.answerSeconds}
@@ -167,6 +208,40 @@ export default function RoundScreen() {
           }}
         />
 
+        {voting ? (
+          <VotePanel
+            targets={alive}
+            accused={room.tiebreaker ?? []}
+            selected={votesIn ? (room.votes[YOU_ID] ?? null) : voteFor}
+            onSelect={setVoteFor}
+            votesIn={votesIn}
+            tally={votesIn ? voteTally(room) : {}}
+            canVote={!out}
+            title={inTiebreaker ? `It is between ${accusedNames}` : 'Who is the impostor?'}
+            note={
+              votesIn
+                ? 'You cannot change your vote.'
+                : out
+                  ? 'Eliminated players do not get a vote.'
+                  : inTiebreaker
+                    ? 'Not convinced by either? Name somebody else.'
+                    : 'Nobody sees the tally until you lock in.'
+            }
+            actionLabel={
+              votesIn
+                ? opensTiebreaker
+                  ? 'It is a tie — talk it out'
+                  : 'See the result'
+                : out
+                  ? 'Watch the vote'
+                  : 'Lock in vote'
+            }
+            onAction={() => {
+              if (votesIn) resolveVote();
+              else castVote(out ? null : voteFor);
+            }}
+          />
+        ) : (
         <Composer
           ref={composerRef}
           onSend={(text) => {
@@ -186,6 +261,7 @@ export default function RoundScreen() {
           }
           onCancelReply={() => setReplyToId(null)}
         />
+        )}
         <View style={{ height: insets.bottom, backgroundColor: Colors.background }} />
       </KeyboardAvoidingView>
     </Screen>

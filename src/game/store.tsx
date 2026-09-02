@@ -22,7 +22,9 @@ import {
   currentTurnId,
   DEFAULT_SETTINGS,
   humansAlive,
-  votedOutId,
+  survivors,
+  tiebreakerPrompt,
+  voteResult,
   YOU_ID,
   type Outcome,
   type Player,
@@ -104,10 +106,50 @@ function matchedRoom(id: string, name: string, strangers: Player[]): Room {
     prompts,
     votes: {},
     eliminatedId: null,
+    tiebreaker: null,
     outcome: null,
     spectating: false,
     impostorId: impostor?.id ?? null,
     settings: { ...DEFAULT_SETTINGS, playerCount: players.length },
+  };
+}
+
+/**
+ * Who speaks in a tiebreaker and in what order. The accused open every pass —
+ * it is their case to make — and the room answers back. They get more messages
+ * than everyone else, and the spare ones land at the end, so they also have the
+ * last word before the vote.
+ */
+function tiebreakerTurnOrder(room: Room, accused: string[]) {
+  const alive = room.players.filter((p) => !p.eliminated).map((p) => p.id);
+  const first = alive.filter((id) => accused.includes(id));
+  const rest = alive.filter((id) => !accused.includes(id));
+  const { tiebreakerTurns, tiebreakerTurnsAccused } = room.settings;
+
+  const order: string[] = [];
+  for (let pass = 0; pass < Math.max(tiebreakerTurns, tiebreakerTurnsAccused); pass++) {
+    if (pass < tiebreakerTurnsAccused) order.push(...first);
+    if (pass < tiebreakerTurns) order.push(...rest);
+  }
+  return order;
+}
+
+/**
+ * Puts the tied players up against each other and reopens the room to talk it
+ * out, then a second vote between just those two. The round's answers stay on
+ * screen — the case is made against what was already said, not in isolation.
+ */
+function startTiebreaker(room: Room, tied: string[]): Room {
+  return {
+    ...room,
+    phase: 'answering',
+    tiebreaker: tied,
+    prompt: tiebreakerPrompt(room, tied),
+    votes: {},
+    eliminatedId: null,
+    turnOrder: tiebreakerTurnOrder(room, tied),
+    turnIndex: 0,
+    turnEndsAt: secondsFromNow(room.settings.answerSeconds),
   };
 }
 
@@ -119,6 +161,8 @@ function matchedRoom(id: string, name: string, strangers: Player[]): Room {
 function outcomeFor(room: Room, eliminatedId: string | null): Outcome | null {
   if (eliminatedId && eliminatedId === room.impostorId) return 'humans';
   if (humansAlive(room) <= 1) return 'impostor';
+  // Rounds the room failed to use are rounds the impostor survived.
+  if (room.round >= room.settings.maxRounds) return 'impostor';
   return null;
 }
 
@@ -188,13 +232,15 @@ function reducer(state: State, action: Action): State {
     case 'castVote': {
       if (!room) return state;
       // Stand-in for the other players' votes so the tally isn't empty. A null
-      // target means you are out and only the survivors are voting.
-      const alive = room.players.filter((p) => !p.eliminated);
+      // target means you had no vote to cast — you are out — and only the rest
+      // of the room is deciding.
+      const alive = survivors(room);
       const votes: Record<string, string> = {};
       for (const voter of alive) {
         if (voter.isYou) continue;
-        const targets = alive.filter((t) => t.id !== voter.id);
-        votes[voter.id] = targets[Math.floor(Math.random() * targets.length)].id;
+        const options = alive.filter((t) => t.id !== voter.id);
+        if (options.length === 0) continue;
+        votes[voter.id] = options[Math.floor(Math.random() * options.length)].id;
       }
       if (action.targetId) votes[YOU_ID] = action.targetId;
 
@@ -203,7 +249,15 @@ function reducer(state: State, action: Action): State {
 
     case 'resolveVote': {
       if (!room) return state;
-      const eliminatedId = votedOutId(room);
+      const result = voteResult(room);
+
+      // A first tie opens a tiebreaker. A tie in the tiebreaker itself removes
+      // nobody — the round is spent and the match moves on.
+      if (result.kind === 'tied' && !room.tiebreaker) {
+        return { ...state, room: startTiebreaker(room, result.playerIds) };
+      }
+
+      const eliminatedId = result.kind === 'eliminated' ? result.playerId : null;
 
       const resolved: Room = {
         ...room,
@@ -231,6 +285,7 @@ function reducer(state: State, action: Action): State {
           answers: [],
           votes: {},
           eliminatedId: null,
+          tiebreaker: null,
           turnOrder: turnOrderFor(room.players, round, room.settings.turnsEach),
           turnIndex: 0,
           turnEndsAt: secondsFromNow(room.settings.answerSeconds),

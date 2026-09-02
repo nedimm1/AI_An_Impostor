@@ -89,7 +89,9 @@ export default function ResultsScreen() {
             <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
               {humansWon
                 ? 'The room voted it out.'
-                : `Only ${humansAlive(room)} human left. It cannot be outvoted now.`}
+                : humansAlive(room) <= 1
+                  ? `Only ${humansAlive(room)} human left. It cannot be outvoted now.`
+                  : `It sat through all ${room.settings.maxRounds} rounds without being caught.`}
             </ThemedText>
           </View>
         ) : (
@@ -110,7 +112,9 @@ export default function ResultsScreen() {
               <>
                 <ThemedText type="title">Nobody is out</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
-                  The vote was tied, so the room moves on with everyone still in.
+                  {room.tiebreaker
+                    ? 'The tiebreaker was tied too. The round is spent and everyone stays in.'
+                    : 'Nobody drew a vote, so the room moves on with everyone still in.'}
                 </ThemedText>
               </>
             )}

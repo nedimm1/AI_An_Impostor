@@ -45,6 +45,15 @@ export type MatchSettings = {
   answerSeconds: number;
   /** How many times each player speaks per round, going round the room each time. */
   turnsEach: number;
+  /**
+   * Rounds the room gets before the impostor has simply outlasted them. Without
+   * a cap a room that keeps tying never ends.
+   */
+  maxRounds: number;
+  /** Messages everyone else gets in a tiebreaker. */
+  tiebreakerTurns: number;
+  /** Messages each accused player gets. More, since it is about them. */
+  tiebreakerTurnsAccused: number;
 };
 
 export type Room = {
@@ -70,8 +79,14 @@ export type Room = {
   prompts: string[];
   /** voterId -> targetId */
   votes: Record<string, string>;
-  /** Who the round's vote removed, or null on a tie. */
+  /** Who the round's vote removed, or null when the vote settled on nobody. */
   eliminatedId: string | null;
+  /**
+   * The players a tied vote put up against each other. The whole room talks it
+   * out — them first, and more often than anyone else — then the rest votes
+   * between them. Null outside a tiebreaker.
+   */
+  tiebreaker: string[] | null;
   /** Set once the match is decided; null while it is still running. */
   outcome: Outcome | null;
   /** You were voted out and chose to keep watching rather than leave. */
@@ -87,10 +102,29 @@ export type Room = {
 export const DEFAULT_SETTINGS: MatchSettings = {
   playerCount: 6,
   answerSeconds: 45,
-  turnsEach: 5,
+  // Dropped from 5 to 1 so a round is quick to play through while testing.
+  turnsEach: 1,
+  maxRounds: 5,
+  tiebreakerTurns: 3,
+  tiebreakerTurnsAccused: 4,
 };
 
 export const YOU_ID = 'you';
+
+/** "Mara", "Mara and Deniz", "Mara, Deniz and Ines". */
+export function listNames(names: string[]) {
+  if (names.length <= 1) return names[0] ?? 'nobody';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The one prompt nobody draws. Everyone answers it in a tiebreaker, not just
+ * the two it is about, so it has to read for the whole room.
+ */
+export function tiebreakerPrompt(room: Room, accused: string[]) {
+  const names = accused.map((id) => playerById(room, id)?.name ?? 'someone');
+  return `It is between ${listNames(names)}. Say your piece before the vote.`;
+}
 
 export function playerById(room: Room, id: string | null | undefined) {
   if (!id) return undefined;
@@ -150,13 +184,36 @@ export function voteTally(room: Room) {
 }
 
 /**
- * The most-voted player, or null on a tie. A tie removes nobody and the match
- * moves on to the next round.
+ * How a vote came out. A tie names everyone level at the top rather than just
+ * giving up — those are the players a tiebreaker is between.
  */
-export function votedOutId(room: Room) {
-  const tally = voteTally(room);
-  const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0) return null;
-  if (entries.length > 1 && entries[0][1] === entries[1][1]) return null;
-  return entries[0][0];
+export type VoteResult =
+  | { kind: 'eliminated'; playerId: string }
+  | { kind: 'tied'; playerIds: string[] }
+  | { kind: 'nobody' };
+
+export function voteResult(room: Room): VoteResult {
+  const entries = Object.entries(voteTally(room));
+  if (entries.length === 0) return { kind: 'nobody' };
+
+  const most = Math.max(...entries.map(([, count]) => count));
+  const top = entries.filter(([, count]) => count === most).map(([id]) => id);
+
+  if (top.length > 1) return { kind: 'tied', playerIds: top };
+  return { kind: 'eliminated', playerId: top[0] };
+}
+
+/**
+ * True when a tiebreaker put this player up. They are marked in the vote, but
+ * the ballot is not narrowed to them — a room that decides both are innocent
+ * can still name somebody else, so everyone alive stays votable and everyone
+ * alive keeps their vote.
+ */
+export function isAccused(room: Room, id: string) {
+  return room.tiebreaker?.includes(id) ?? false;
+}
+
+/** True when the tiebreaker is being held about you. */
+export function youAreAccused(room: Room) {
+  return room.tiebreaker?.includes(YOU_ID) ?? false;
 }

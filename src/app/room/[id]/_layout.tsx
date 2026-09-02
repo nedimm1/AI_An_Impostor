@@ -11,10 +11,6 @@ export default function RoomLayout() {
         animation: 'slide_from_right',
       }}>
       <Stack.Screen name="round" options={{ gestureEnabled: false }} />
-      <Stack.Screen
-        name="vote"
-        options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
-      />
       <Stack.Screen name="results" options={{ animation: 'fade', gestureEnabled: false }} />
     </Stack>
   );
