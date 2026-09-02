@@ -7,15 +7,21 @@ import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
+import { countWord, DEFAULT_SETTINGS } from '@/game/types';
 
-/** Decorative lineup — five "players", one of which is unreadable. */
+/** Decorative lineup — a room's worth of "players", one of them unreadable. */
 const LINEUP = [
   { id: 'lineup-a', name: 'Mara' },
   { id: 'lineup-b', name: 'Deniz' },
-  { id: 'lineup-c', name: '??' },
-  { id: 'lineup-d', name: 'Kofi' },
+  { id: 'lineup-c', name: 'Kofi' },
+  { id: 'lineup-d', name: '??' },
   { id: 'lineup-e', name: 'Sasha' },
+  { id: 'lineup-f', name: 'Ines' },
+  { id: 'lineup-g', name: 'Rune' },
 ];
+
+/** Which slot in the lineup is the one you cannot read. */
+const IMPOSTOR_SLOT = 3;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -30,14 +36,14 @@ export default function HomeScreen() {
       <View style={styles.hero}>
         <View style={styles.lineup}>
           {LINEUP.map((p, i) =>
-            i === 2 ? (
+            i === IMPOSTOR_SLOT ? (
               <View key={p.id} style={styles.impostorSlot}>
                 <ThemedText type="subtitle" style={styles.impostorGlyph}>
                   ?
                 </ThemedText>
               </View>
             ) : (
-              <Avatar key={p.id} id={p.id} name={p.name} size={44} />
+              <Avatar key={p.id} id={p.id} name={p.name} size={40} />
             )
           )}
         </View>
@@ -47,8 +53,8 @@ export default function HomeScreen() {
             An Impostor
           </ThemedText>
           <ThemedText type="body" themeColor="textSecondary" style={styles.tagline}>
-            You and five strangers in a chatroom. One of them isn&apos;t a person. Vote it out
-            before it outlasts you.
+            You and {countWord(DEFAULT_SETTINGS.playerCount - 1)} strangers in a chatroom. One of
+            them isn&apos;t a person. Vote it out before it outlasts you.
           </ThemedText>
         </View>
       </View>
@@ -89,11 +95,13 @@ const styles = StyleSheet.create({
   },
   lineup: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
     gap: Spacing.two,
   },
   impostorSlot: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: Radius.pill,
     backgroundColor: Colors.dangerMuted,
     borderWidth: 1,

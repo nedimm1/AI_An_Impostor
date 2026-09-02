@@ -128,15 +128,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: Spacing.one,
+    gap: Spacing.half,
     paddingVertical: Spacing.one,
   },
+  /* Sized so a full room fits on one row — a candidate on a second row reads
+     as an afterthought. Wrapping is only the fallback for a narrow screen. */
   chip: {
-    width: 56,
+    width: 52,
     alignItems: 'center',
     gap: Spacing.one,
     paddingVertical: Spacing.two,
-    paddingHorizontal: Spacing.one,
+    paddingHorizontal: Spacing.half,
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: 'transparent',
@@ -149,6 +151,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundElement,
   },
   name: {
+    fontSize: 11,
+    lineHeight: 14,
     maxWidth: '100%',
   },
   /* Tall enough for a Pill, fixed so the strip does not jump when one lands. */

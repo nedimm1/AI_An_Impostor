@@ -27,6 +27,12 @@ export type Answer = {
   /** True when the clock ran out before they wrote anything. */
   timedOut: boolean;
   /**
+   * Written during a tiebreaker rather than in the round proper. The round's
+   * own answers stay on screen through a tiebreaker, so the two need telling
+   * apart.
+   */
+  inTiebreaker: boolean;
+  /**
    * The answer this one is written at, or null when it stands alone. Only ever
    * points inside the current round — answers are cleared between rounds.
    */
@@ -100,16 +106,25 @@ export type Room = {
 };
 
 export const DEFAULT_SETTINGS: MatchSettings = {
-  playerCount: 6,
+  playerCount: 7,
   answerSeconds: 45,
   // Dropped from 5 to 1 so a round is quick to play through while testing.
   turnsEach: 1,
-  maxRounds: 5,
+  // Six humans take five eliminations to whittle down, so a clean match runs
+  // five rounds. Six leaves the room one tied round of slack before the
+  // impostor has simply outlasted them.
+  maxRounds: 6,
   tiebreakerTurns: 3,
   tiebreakerTurnsAccused: 4,
 };
 
 export const YOU_ID = 'you';
+
+/** Small numbers as words, for copy that has to read as a sentence. */
+export function countWord(n: number) {
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  return words[n] ?? String(n);
+}
 
 /** "Mara", "Mara and Deniz", "Mara, Deniz and Ines". */
 export function listNames(names: string[]) {

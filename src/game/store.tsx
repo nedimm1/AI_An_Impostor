@@ -209,6 +209,7 @@ function reducer(state: State, action: Action): State {
           playerId: speakerId,
           text: action.text.trim(),
           timedOut: action.timedOut,
+          inTiebreaker: room.tiebreaker !== null,
           replyToId,
           createdAt: Date.now(),
         },

@@ -45,6 +45,10 @@ export default function RoundScreen() {
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
+  // Whether the transcript is parked at the bottom. New answers only pull the
+  // list down when it is — otherwise reading back through a tiebreaker would be
+  // yanked to the end every few seconds.
+  const atBottom = useRef(true);
 
   // The answer you are writing back at, picked by long-pressing its bubble.
   const [replyToId, setReplyToId] = useState<string | null>(null);
@@ -187,23 +191,47 @@ export default function RoundScreen() {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="interactive"
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+          scrollEventThrottle={64}
+          onScroll={({ nativeEvent: e }) => {
+            const fromBottom =
+              e.contentSize.height - (e.contentOffset.y + e.layoutMeasurement.height);
+            atBottom.current = fromBottom < 96;
+          }}
+          onContentSizeChange={() => {
+            if (atBottom.current) listRef.current?.scrollToEnd({ animated: true });
+          }}
           ListEmptyComponent={
             <ThemedText type="small" themeColor="textMuted" style={styles.empty}>
               Nobody has answered yet.
             </ThemedText>
           }
-          renderItem={({ item }) => {
+          renderItem={({ item, index }) => {
             const quoted = answerById(room, item.replyToId);
+            // Everything above this line was said before the room tied.
+            const opensTheTiebreaker =
+              item.inTiebreaker && !room.answers[index - 1]?.inTiebreaker;
+
             return (
-              <AnswerBubble
-                answer={item}
-                author={playerById(room, item.playerId)}
-                replyTo={quoted}
-                replyToAuthor={playerById(room, quoted?.playerId)}
-                onReply={out ? undefined : () => setReplyToId(item.id)}
-                replySelected={item.id === replyToId}
-              />
+              <>
+                {opensTheTiebreaker ? (
+                  <View style={styles.marker}>
+                    <View style={styles.markerRule} />
+                    <ThemedText type="label" themeColor="warning">
+                      Tiebreaker
+                    </ThemedText>
+                    <View style={styles.markerRule} />
+                  </View>
+                ) : null}
+
+                <AnswerBubble
+                  answer={item}
+                  author={playerById(room, item.playerId)}
+                  replyTo={quoted}
+                  replyToAuthor={playerById(room, quoted?.playerId)}
+                  onReply={out ? undefined : () => setReplyToId(item.id)}
+                  replySelected={item.id === replyToId}
+                />
+              </>
             );
           }}
         />
@@ -303,6 +331,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.three,
     flexGrow: 1,
+  },
+  marker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingTop: Spacing.four,
+    paddingBottom: Spacing.one,
+  },
+  markerRule: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
   },
   empty: {
     textAlign: 'center',
