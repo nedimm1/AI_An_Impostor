@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Pill } from '@/components/ui/pill';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import type { Player } from '@/game/types';
+import { formatClock } from '@/hooks/use-countdown';
 
 type VotePanelProps = {
   /** Everyone still in. You are shown but never votable. */
@@ -21,6 +22,11 @@ type VotePanelProps = {
   canVote: boolean;
   title: string;
   note: string;
+  /**
+   * Seconds left on the vote's current stage — the ballot while it is open,
+   * then the reveal. Null when nothing is on the clock.
+   */
+  remaining: number | null;
   actionLabel: string;
   onAction: () => void;
 };
@@ -39,13 +45,26 @@ export function VotePanel({
   canVote,
   title,
   note,
+  remaining,
   actionLabel,
   onAction,
 }: VotePanelProps) {
+  // The last few seconds are when an undecided vote actually costs something.
+  const urgent = remaining !== null && remaining <= 10 && !votesIn;
+
   return (
     <View style={styles.panel}>
       <View style={styles.head}>
-        <ThemedText type="bodyBold">{title}</ThemedText>
+        <View style={styles.headRow}>
+          <ThemedText type="bodyBold" style={styles.title} numberOfLines={1}>
+            {title}
+          </ThemedText>
+          {remaining !== null ? (
+            <ThemedText type="mono" themeColor={urgent ? 'danger' : 'textSecondary'}>
+              {formatClock(remaining)}
+            </ThemedText>
+          ) : null}
+        </View>
         <ThemedText type="small" themeColor="textMuted" numberOfLines={1}>
           {note}
         </ThemedText>
@@ -123,6 +142,15 @@ const styles = StyleSheet.create({
   },
   head: {
     gap: 2,
+  },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+  },
+  title: {
+    flex: 1,
   },
   strip: {
     flexDirection: 'row',

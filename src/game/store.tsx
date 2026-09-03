@@ -34,6 +34,7 @@ import {
 type Action =
   | { type: 'startMatch'; id: string; name: string; strangers: Player[] }
   | { type: 'answerTurn'; text: string; timedOut: boolean; replyToId: string | null }
+  | { type: 'playerLeft'; playerId: string }
   | { type: 'castVote'; targetId: string | null }
   | { type: 'resolveVote' }
   | { type: 'nextRound' }
@@ -65,7 +66,7 @@ function pickPrompt(prompts: string[], round: number) {
  * per pass so everyone gets several goes at the same prompt.
  */
 function turnOrderFor(players: Player[], round: number, turnsEach: number) {
-  const alive = players.filter((p) => !p.eliminated).map((p) => p.id);
+  const alive = players.filter((p) => !p.eliminated && p.connected).map((p) => p.id);
   if (alive.length === 0) return [];
   const start = (round - 1) % alive.length;
   const rotated = [...alive.slice(start), ...alive.slice(0, start)];
@@ -102,9 +103,11 @@ function matchedRoom(id: string, name: string, strangers: Player[]): Room {
     turnOrder: turnOrderFor(players, 1, DEFAULT_SETTINGS.turnsEach),
     turnIndex: 0,
     turnEndsAt: secondsFromNow(DEFAULT_SETTINGS.answerSeconds),
+    voteEndsAt: null,
     prompt: pickPrompt(prompts, 1),
     prompts,
     votes: {},
+    ballotClosed: false,
     eliminatedId: null,
     tiebreaker: null,
     outcome: null,
@@ -121,7 +124,7 @@ function matchedRoom(id: string, name: string, strangers: Player[]): Room {
  * last word before the vote.
  */
 function tiebreakerTurnOrder(room: Room, accused: string[]) {
-  const alive = room.players.filter((p) => !p.eliminated).map((p) => p.id);
+  const alive = room.players.filter((p) => !p.eliminated && p.connected).map((p) => p.id);
   const first = alive.filter((id) => accused.includes(id));
   const rest = alive.filter((id) => !accused.includes(id));
   const { tiebreakerTurns, tiebreakerTurnsAccused } = room.settings;
@@ -146,10 +149,29 @@ function startTiebreaker(room: Room, tied: string[]): Room {
     tiebreaker: tied,
     prompt: tiebreakerPrompt(room, tied),
     votes: {},
+    ballotClosed: false,
     eliminatedId: null,
     turnOrder: tiebreakerTurnOrder(room, tied),
     turnIndex: 0,
     turnEndsAt: secondsFromNow(room.settings.answerSeconds),
+    voteEndsAt: null,
+  };
+}
+
+/**
+ * Takes a player out of the remaining turns. Their turns simply disappear —
+ * nobody sits through forty-five seconds of silence for someone who is not
+ * there — and the index shifts back by however many of theirs had already gone
+ * so the room keeps its place in the order.
+ */
+function turnOrderWithout(room: Room, playerId: string) {
+  const goneBefore = room.turnOrder
+    .slice(0, room.turnIndex)
+    .filter((id) => id === playerId).length;
+
+  return {
+    turnOrder: room.turnOrder.filter((id) => id !== playerId),
+    turnIndex: room.turnIndex - goneBefore,
   };
 }
 
@@ -160,6 +182,8 @@ function startTiebreaker(room: Room, tied: string[]): Room {
  */
 function outcomeFor(room: Room, eliminatedId: string | null): Outcome | null {
   if (eliminatedId && eliminatedId === room.impostorId) return 'humans';
+  // A human who walks out is a human the impostor no longer has to fool, so
+  // this catches a room that empties out as well as one that is whittled down.
   if (humansAlive(room) <= 1) return 'impostor';
   // Rounds the room failed to use are rounds the impostor survived.
   if (room.round >= room.settings.maxRounds) return 'impostor';
@@ -206,6 +230,7 @@ function reducer(state: State, action: Action): State {
         ...room.answers,
         {
           id: makeId('ans'),
+          kind: 'answer' as const,
           playerId: speakerId,
           text: action.text.trim(),
           timedOut: action.timedOut,
@@ -226,6 +251,89 @@ function reducer(state: State, action: Action): State {
           turnIndex,
           phase: everyoneAnswered ? 'voting' : 'answering',
           turnEndsAt: everyoneAnswered ? null : secondsFromNow(room.settings.answerSeconds),
+          voteEndsAt: everyoneAnswered ? secondsFromNow(room.settings.voteSeconds) : null,
+        },
+      };
+    }
+
+    case 'playerLeft': {
+      if (!room || room.outcome) return state;
+      const player = room.players.find((p) => p.id === action.playerId);
+      if (!player || !player.connected || player.eliminated) return state;
+
+      const wasSpeaking = currentTurnId(room) === action.playerId;
+      const { turnOrder, turnIndex } = turnOrderWithout(room, action.playerId);
+      const everyoneAnswered = turnIndex >= turnOrder.length;
+
+      // Whatever they had voted for goes with them.
+      const votes = { ...room.votes };
+      delete votes[action.playerId];
+
+      // Walking out of your own tiebreaker takes you out of it. The one still
+      // standing is not handed the elimination — that would be a way to remove
+      // anybody by quitting — so the room simply votes with the accusation
+      // collapsed.
+      const stillAccused = room.tiebreaker?.filter((id) => id !== action.playerId) ?? null;
+      const accusationHeld = stillAccused === null || stillAccused.length >= 2;
+
+      const left: Room = {
+        ...room,
+        players: room.players.map((p) =>
+          p.id === action.playerId ? { ...p, connected: false } : p
+        ),
+        tiebreaker: stillAccused,
+        prompt:
+          stillAccused === null
+            ? room.prompt
+            : accusationHeld
+              ? tiebreakerPrompt(room, stillAccused)
+              : `${player.name} walked out mid-accusation. The room still has to vote.`,
+        answers: [
+          ...room.answers,
+          {
+            id: makeId('out'),
+            kind: 'departure' as const,
+            playerId: action.playerId,
+            text: '',
+            timedOut: false,
+            inTiebreaker: room.tiebreaker !== null,
+            replyToId: null,
+            createdAt: Date.now(),
+          },
+        ],
+        votes,
+        turnOrder,
+        turnIndex,
+        phase: room.phase === 'answering' && everyoneAnswered ? 'voting' : room.phase,
+        // Only the person who walked out mid-sentence hands their clock on. If
+        // somebody further down the order left, the speaker keeps their time.
+        turnEndsAt:
+          room.phase !== 'answering' || everyoneAnswered
+            ? null
+            : wasSpeaking
+              ? secondsFromNow(room.settings.answerSeconds)
+              : room.turnEndsAt,
+        // Somebody walking out can be what closes the round, and the ballot
+        // opens on its own clock when it does.
+        voteEndsAt:
+          room.phase === 'answering' && everyoneAnswered
+            ? secondsFromNow(room.settings.voteSeconds)
+            : room.voteEndsAt,
+      };
+
+      // A room that empties out can decide the match on its own.
+      const outcome = outcomeFor(left, null);
+      if (!outcome) return { ...state, room: left };
+
+      return {
+        ...state,
+        room: {
+          ...left,
+          outcome,
+          phase: 'verdict',
+          turnEndsAt: null,
+          voteEndsAt: null,
+          eliminatedId: null,
         },
       };
     }
@@ -245,7 +353,16 @@ function reducer(state: State, action: Action): State {
       }
       if (action.targetId) votes[YOU_ID] = action.targetId;
 
-      return { ...state, room: { ...room, votes } };
+      // The ballot is closed. What is left on the clock is the reveal.
+      return {
+        ...state,
+        room: {
+          ...room,
+          votes,
+          ballotClosed: true,
+          voteEndsAt: secondsFromNow(room.settings.revealSeconds),
+        },
+      };
     }
 
     case 'resolveVote': {
@@ -268,6 +385,7 @@ function reducer(state: State, action: Action): State {
         eliminatedId,
         phase: 'verdict',
         turnEndsAt: null,
+        voteEndsAt: null,
       };
 
       return { ...state, room: { ...resolved, outcome: outcomeFor(resolved, eliminatedId) } };
@@ -285,11 +403,13 @@ function reducer(state: State, action: Action): State {
           prompt: pickPrompt(room.prompts, round),
           answers: [],
           votes: {},
+          ballotClosed: false,
           eliminatedId: null,
           tiebreaker: null,
           turnOrder: turnOrderFor(room.players, round, room.settings.turnsEach),
           turnIndex: 0,
           turnEndsAt: secondsFromNow(room.settings.answerSeconds),
+          voteEndsAt: null,
         },
       };
     }
@@ -303,6 +423,7 @@ function reducer(state: State, action: Action): State {
 type RoomContextValue = State & {
   startMatch: (id: string, name: string, strangers: Player[]) => void;
   answerTurn: (text: string, timedOut: boolean, replyToId?: string | null) => void;
+  playerLeft: (playerId: string) => void;
   castVote: (targetId: string | null) => void;
   resolveVote: () => void;
   nextRound: () => void;
@@ -326,6 +447,10 @@ export function RoomProvider({ children }: PropsWithChildren) {
       dispatch({ type: 'answerTurn', text, timedOut, replyToId }),
     []
   );
+  const playerLeft = useCallback(
+    (playerId: string) => dispatch({ type: 'playerLeft', playerId }),
+    []
+  );
   const castVote = useCallback(
     (targetId: string | null) => dispatch({ type: 'castVote', targetId }),
     []
@@ -341,6 +466,7 @@ export function RoomProvider({ children }: PropsWithChildren) {
       ...state,
       startMatch,
       answerTurn,
+      playerLeft,
       castVote,
       resolveVote,
       nextRound,
@@ -352,6 +478,7 @@ export function RoomProvider({ children }: PropsWithChildren) {
       state,
       startMatch,
       answerTurn,
+      playerLeft,
       castVote,
       resolveVote,
       nextRound,

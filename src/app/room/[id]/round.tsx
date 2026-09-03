@@ -18,6 +18,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
 import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
 import { useBotTurns } from '@/game/bots';
+import { useDropouts } from '@/game/dropouts';
 import { useRoomStore } from '@/game/store';
 import {
   answerById,
@@ -41,14 +42,14 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function RoundScreen() {
   const router = useRouter();
-  const { room, answerTurn, castVote, resolveVote } = useRoomStore();
+  const { room, answerTurn, playerLeft, castVote, resolveVote } = useRoomStore();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
-  // Whether the transcript is parked at the bottom. New answers only pull the
-  // list down when it is — otherwise reading back through a tiebreaker would be
-  // yanked to the end every few seconds.
-  const atBottom = useRef(true);
+  // A new answer always pulls the transcript to the end, however far back you
+  // had scrolled. The flag holds the scroll open until the new bubble has been
+  // measured, since the list has no height for it yet when the answer lands.
+  const pendingScroll = useRef(false);
 
   // The answer you are writing back at, picked by long-pressing its bubble.
   const [replyToId, setReplyToId] = useState<string | null>(null);
@@ -56,10 +57,19 @@ export default function RoundScreen() {
   const [voteFor, setVoteFor] = useState<string | null>(null);
 
   useBotTurns(room, answerTurn);
+  useDropouts(room, playerLeft);
 
   const phase = room?.phase;
   const id = room?.id;
   const round = room?.round;
+
+  // Every answer that lands — yours or theirs — takes the transcript to the end.
+  const answerCount = room?.answers.length ?? 0;
+  useEffect(() => {
+    if (answerCount === 0) return;
+    pendingScroll.current = true;
+    listRef.current?.scrollToEnd({ animated: true });
+  }, [answerCount]);
 
   // Answers are cleared between rounds, so a target from the last one is gone.
   useEffect(() => setReplyToId(null), [round]);
@@ -92,6 +102,17 @@ export default function RoundScreen() {
 
   const remaining = useCountdown(room?.turnEndsAt ?? null, onTimeUp);
 
+  // Nobody's phone-down decides the round. The ballot closes on its own with
+  // whatever you had picked, and the tally then moves the room on by itself —
+  // both stages run off the same clock.
+  const onVoteTimeUp = useCallback(() => {
+    if (!room || room.phase !== 'voting') return;
+    if (!room.ballotClosed) castVote(out ? null : voteFor);
+    else resolveVote();
+  }, [room, out, voteFor, castVote, resolveVote]);
+
+  const voteRemaining = useCountdown(room?.voteEndsAt ?? null, onVoteTimeUp);
+
   if (!room) return <Redirect href="/" />;
 
   const speaker = playerById(room, currentTurnId(room));
@@ -100,10 +121,16 @@ export default function RoundScreen() {
 
   const voting = room.phase === 'voting';
   const inTiebreaker = room.tiebreaker !== null;
+  // An accused player who walked out leaves the tiebreaker with one side. The
+  // room still votes, but there is no longer a pair to put it "between".
+  const accusationHeld = (room.tiebreaker?.length ?? 0) >= 2;
   const accused = youAreAccused(room);
   const speakerAccused = speaker ? (room.tiebreaker?.includes(speaker.id) ?? false) : false;
 
-  const votesIn = Object.keys(room.votes).length > 0;
+  const votesIn = room.ballotClosed;
+  // Worth saying out loud only once it is about to cost you a vote.
+  const ballotClosing =
+    !votesIn && !out && voteFor === null && voteRemaining !== null && voteRemaining <= 10;
   // A first tie opens a tiebreaker, not a result — say so on the button.
   const opensTiebreaker = !inTiebreaker && votesIn && voteResult(room).kind === 'tied';
   const accusedNames = (room.tiebreaker ?? [])
@@ -191,14 +218,10 @@ export default function RoundScreen() {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="interactive"
-          scrollEventThrottle={64}
-          onScroll={({ nativeEvent: e }) => {
-            const fromBottom =
-              e.contentSize.height - (e.contentOffset.y + e.layoutMeasurement.height);
-            atBottom.current = fromBottom < 96;
-          }}
           onContentSizeChange={() => {
-            if (atBottom.current) listRef.current?.scrollToEnd({ animated: true });
+            if (!pendingScroll.current) return;
+            pendingScroll.current = false;
+            listRef.current?.scrollToEnd({ animated: true });
           }}
           ListEmptyComponent={
             <ThemedText type="small" themeColor="textMuted" style={styles.empty}>
@@ -211,17 +234,33 @@ export default function RoundScreen() {
             const opensTheTiebreaker =
               item.inTiebreaker && !room.answers[index - 1]?.inTiebreaker;
 
+            const marker = opensTheTiebreaker ? (
+              <View style={styles.marker}>
+                <View style={styles.markerRule} />
+                <ThemedText type="label" themeColor="warning">
+                  Tiebreaker
+                </ThemedText>
+                <View style={styles.markerRule} />
+              </View>
+            ) : null;
+
+            // Somebody walking out is part of the round, so it reads in the
+            // transcript where it happened rather than only in the roster.
+            if (item.kind === 'departure') {
+              const who = playerById(room, item.playerId);
+              return (
+                <>
+                  {marker}
+                  <ThemedText type="small" themeColor="textMuted" style={styles.departure}>
+                    {who?.name ?? 'Someone'} left the room
+                  </ThemedText>
+                </>
+              );
+            }
+
             return (
               <>
-                {opensTheTiebreaker ? (
-                  <View style={styles.marker}>
-                    <View style={styles.markerRule} />
-                    <ThemedText type="label" themeColor="warning">
-                      Tiebreaker
-                    </ThemedText>
-                    <View style={styles.markerRule} />
-                  </View>
-                ) : null}
+                {marker}
 
                 <AnswerBubble
                   answer={item}
@@ -239,21 +278,28 @@ export default function RoundScreen() {
         {voting ? (
           <VotePanel
             targets={alive}
-            accused={room.tiebreaker ?? []}
+            accused={accusationHeld ? (room.tiebreaker ?? []) : []}
             selected={votesIn ? (room.votes[YOU_ID] ?? null) : voteFor}
             onSelect={setVoteFor}
             votesIn={votesIn}
             tally={votesIn ? voteTally(room) : {}}
             canVote={!out}
-            title={inTiebreaker ? `It is between ${accusedNames}` : 'Who is the impostor?'}
+            title={
+              inTiebreaker && accusationHeld
+                ? `It is between ${accusedNames}`
+                : 'Who is the impostor?'
+            }
+            remaining={voteRemaining}
             note={
               votesIn
-                ? 'You cannot change your vote.'
+                ? 'The room moves on in a moment.'
                 : out
                   ? 'Eliminated players do not get a vote.'
-                  : inTiebreaker
-                    ? 'Not convinced by either? Name somebody else.'
-                    : 'Nobody sees the tally until you lock in.'
+                  : ballotClosing
+                    ? 'The ballot is closing. No pick counts as no vote.'
+                    : inTiebreaker && accusationHeld
+                      ? 'Not convinced by either? Name somebody else.'
+                      : 'Nobody sees the tally until you lock in.'
             }
             actionLabel={
               votesIn
@@ -343,6 +389,10 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 1,
     backgroundColor: Colors.border,
+  },
+  departure: {
+    textAlign: 'center',
+    paddingVertical: Spacing.three,
   },
   empty: {
     textAlign: 'center',

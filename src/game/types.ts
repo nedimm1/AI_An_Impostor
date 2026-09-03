@@ -15,6 +15,11 @@ export type Player = {
   name: string;
   /** True for the player using this device. */
   isYou: boolean;
+  /**
+   * Still in the room. False once they walk out, which is permanent — the
+   * matchmaker does not hold a seat and there is no rejoin. They stay listed so
+   * the room can see who left rather than just noticing it got smaller.
+   */
   connected: boolean;
   /** Voted out. Still listed, but out of the turn order and the vote. */
   eliminated: boolean;
@@ -22,6 +27,12 @@ export type Player = {
 
 export type Answer = {
   id: string;
+  /**
+   * What this line of the transcript is. Departures sit in the same list as
+   * answers, in order, so the room reads back as it happened — somebody walking
+   * out mid-round is part of the case against them.
+   */
+  kind: 'answer' | 'departure';
   playerId: string;
   text: string;
   /** True when the clock ran out before they wrote anything. */
@@ -47,8 +58,21 @@ export type Outcome = 'humans' | 'impostor';
 export type MatchSettings = {
   /** How many people the matchmaker seats, you included. */
   playerCount: number;
-  /** Seconds each player gets to write their answer. The only clock in the game. */
+  /** Seconds each player gets to write their answer. */
   answerSeconds: number;
+  /**
+   * Seconds the ballot stays open. It closes on its own — a room of strangers
+   * cannot wait on somebody who put their phone down, so an undecided vote is
+   * cast as it stands when the clock runs out.
+   */
+  voteSeconds: number;
+  /** Seconds the tally is readable before the room moves on by itself. */
+  revealSeconds: number;
+  /**
+   * Seconds the round's result stands before the next round opens on its own.
+   * Being voted out is the exception — that screen is a choice, and it waits.
+   */
+  resultSeconds: number;
   /** How many times each player speaks per round, going round the room each time. */
   turnsEach: number;
   /**
@@ -79,12 +103,23 @@ export type Room = {
   turnIndex: number;
   /** Epoch ms the current turn expires, or null between turns. */
   turnEndsAt: number | null;
+  /**
+   * Epoch ms the vote's current stage ends — the ballot while it is open, then
+   * the tally reveal once it has closed. Null outside the vote.
+   */
+  voteEndsAt: number | null;
   /** The question this round is built around. */
   prompt: string;
   /** This match's prompt order, drawn when the room was seated. */
   prompts: string[];
-  /** voterId -> targetId */
+  /** voterId -> targetId. Empty when the ballot closed with nobody named. */
   votes: Record<string, string>;
+  /**
+   * True once the ballot has closed and the tally is readable. Kept apart from
+   * `votes` because a room can close a ballot having named nobody at all, and
+   * that is a result the round has to be able to move on from.
+   */
+  ballotClosed: boolean;
   /** Who the round's vote removed, or null when the vote settled on nobody. */
   eliminatedId: string | null;
   /**
@@ -108,6 +143,11 @@ export type Room = {
 export const DEFAULT_SETTINGS: MatchSettings = {
   playerCount: 7,
   answerSeconds: 45,
+  // Long enough to read the room back, short enough that nobody is waiting on
+  // one person to make up their mind.
+  voteSeconds: 30,
+  revealSeconds: 8,
+  resultSeconds: 15,
   // Dropped from 5 to 1 so a round is quick to play through while testing.
   turnsEach: 1,
   // Six humans take five eliminations to whittle down, so a clean match runs
@@ -149,12 +189,18 @@ export function playerById(room: Room, id: string | null | undefined) {
 /** The answer a reply points at, if it is still on screen. */
 export function answerById(room: Room, id: string | null | undefined) {
   if (!id) return undefined;
-  return room.answers.find((a) => a.id === id);
+  return room.answers.find((a) => a.id === id && a.kind === 'answer');
 }
 
-/** Everyone still in the game. */
+/** Everyone still in the game — not voted out, and not walked out. */
 export function survivors(room: Room) {
-  return room.players.filter((p) => !p.eliminated);
+  return room.players.filter((p) => !p.eliminated && p.connected);
+}
+
+/** True when this player walked out rather than being voted out. */
+export function hasLeft(room: Room, id: string | null | undefined) {
+  const player = playerById(room, id);
+  return player ? !player.connected : false;
 }
 
 /**
