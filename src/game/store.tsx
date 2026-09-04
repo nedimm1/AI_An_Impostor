@@ -19,6 +19,7 @@ import {
 
 import { makeId, shuffledPrompts } from './mock';
 import {
+  awaitedVoters,
   currentTurnId,
   DEFAULT_SETTINGS,
   humansAlive,
@@ -35,8 +36,8 @@ type Action =
   | { type: 'startMatch'; id: string; name: string; strangers: Player[] }
   | { type: 'answerTurn'; text: string; timedOut: boolean; replyToId: string | null }
   | { type: 'playerLeft'; playerId: string }
-  | { type: 'castVote'; targetId: string | null }
-  | { type: 'resolveVote' }
+  | { type: 'castVote'; voterId: string; targetId: string | null }
+  | { type: 'closeBallot' }
   | { type: 'nextRound' }
   | { type: 'spectate' }
   | { type: 'leaveRoom' }
@@ -107,6 +108,7 @@ function matchedRoom(id: string, name: string, strangers: Player[]): Room {
     prompt: pickPrompt(prompts, 1),
     prompts,
     votes: {},
+    voted: [],
     ballotClosed: false,
     eliminatedId: null,
     tiebreaker: null,
@@ -149,6 +151,7 @@ function startTiebreaker(room: Room, tied: string[]): Room {
     tiebreaker: tied,
     prompt: tiebreakerPrompt(room, tied),
     votes: {},
+    voted: [],
     ballotClosed: false,
     eliminatedId: null,
     turnOrder: tiebreakerTurnOrder(room, tied),
@@ -188,6 +191,34 @@ function outcomeFor(room: Room, eliminatedId: string | null): Outcome | null {
   // Rounds the room failed to use are rounds the impostor survived.
   if (room.round >= room.settings.maxRounds) return 'impostor';
   return null;
+}
+
+/**
+ * Closes the ballot and works out what the room decided. A first tie reopens
+ * the room to talk it out instead; a tie inside a tiebreaker removes nobody and
+ * the round is simply spent.
+ */
+function resolveBallot(room: Room): Room {
+  const result = voteResult(room);
+  if (result.kind === 'tied' && !room.tiebreaker) {
+    return startTiebreaker(room, result.playerIds);
+  }
+
+  const eliminatedId = result.kind === 'eliminated' ? result.playerId : null;
+
+  const resolved: Room = {
+    ...room,
+    players: eliminatedId
+      ? room.players.map((p) => (p.id === eliminatedId ? { ...p, eliminated: true } : p))
+      : room.players,
+    eliminatedId,
+    phase: 'verdict',
+    turnEndsAt: null,
+    voteEndsAt: null,
+    ballotClosed: true,
+  };
+
+  return { ...resolved, outcome: outcomeFor(resolved, eliminatedId) };
 }
 
 function reducer(state: State, action: Action): State {
@@ -268,6 +299,7 @@ function reducer(state: State, action: Action): State {
       // Whatever they had voted for goes with them.
       const votes = { ...room.votes };
       delete votes[action.playerId];
+      const voted = room.voted.filter((id) => id !== action.playerId);
 
       // Walking out of your own tiebreaker takes you out of it. The one still
       // standing is not handed the elimination — that would be a way to remove
@@ -302,6 +334,7 @@ function reducer(state: State, action: Action): State {
           },
         ],
         votes,
+        voted,
         turnOrder,
         turnIndex,
         phase: room.phase === 'answering' && everyoneAnswered ? 'voting' : room.phase,
@@ -323,7 +356,11 @@ function reducer(state: State, action: Action): State {
 
       // A room that empties out can decide the match on its own.
       const outcome = outcomeFor(left, null);
-      if (!outcome) return { ...state, room: left };
+      if (!outcome) {
+        // They may have been the last vote the ballot was waiting on.
+        const closes = left.phase === 'voting' && awaitedVoters(left).length === 0;
+        return { ...state, room: closes ? resolveBallot(left) : left };
+      }
 
       return {
         ...state,
@@ -339,56 +376,33 @@ function reducer(state: State, action: Action): State {
     }
 
     case 'castVote': {
-      if (!room) return state;
-      // Stand-in for the other players' votes so the tally isn't empty. A null
-      // target means you had no vote to cast — you are out — and only the rest
-      // of the room is deciding.
-      const alive = survivors(room);
-      const votes: Record<string, string> = {};
-      for (const voter of alive) {
-        if (voter.isYou) continue;
-        const options = alive.filter((t) => t.id !== voter.id);
-        if (options.length === 0) continue;
-        votes[voter.id] = options[Math.floor(Math.random() * options.length)].id;
-      }
-      if (action.targetId) votes[YOU_ID] = action.targetId;
+      if (!room || room.phase !== 'voting' || room.ballotClosed) return state;
+      // Locking in twice is not a way to change your mind.
+      if (room.voted.includes(action.voterId)) return state;
 
-      // The ballot is closed. What is left on the clock is the reveal.
+      const pending: Room = {
+        ...room,
+        voted: [...room.voted, action.voterId],
+        votes: action.targetId
+          ? { ...room.votes, [action.voterId]: action.targetId }
+          : room.votes,
+      };
+
+      // The last vote in is what closes the ballot. Nobody sees a tally before
+      // that, so the result screen is the first anyone hears of it.
       return {
         ...state,
-        room: {
-          ...room,
-          votes,
-          ballotClosed: true,
-          voteEndsAt: secondsFromNow(room.settings.revealSeconds),
-        },
+        room: awaitedVoters(pending).length === 0 ? resolveBallot(pending) : pending,
       };
     }
 
-    case 'resolveVote': {
-      if (!room) return state;
-      const result = voteResult(room);
-
-      // A first tie opens a tiebreaker. A tie in the tiebreaker itself removes
-      // nobody — the round is spent and the match moves on.
-      if (result.kind === 'tied' && !room.tiebreaker) {
-        return { ...state, room: startTiebreaker(room, result.playerIds) };
-      }
-
-      const eliminatedId = result.kind === 'eliminated' ? result.playerId : null;
-
-      const resolved: Room = {
-        ...room,
-        players: eliminatedId
-          ? room.players.map((p) => (p.id === eliminatedId ? { ...p, eliminated: true } : p))
-          : room.players,
-        eliminatedId,
-        phase: 'verdict',
-        turnEndsAt: null,
-        voteEndsAt: null,
+    case 'closeBallot': {
+      if (!room || room.phase !== 'voting' || room.ballotClosed) return state;
+      // Time is up. Everyone still out is counted as having named nobody.
+      return {
+        ...state,
+        room: resolveBallot({ ...room, voted: survivors(room).map((p) => p.id) }),
       };
-
-      return { ...state, room: { ...resolved, outcome: outcomeFor(resolved, eliminatedId) } };
     }
 
     case 'nextRound': {
@@ -403,6 +417,7 @@ function reducer(state: State, action: Action): State {
           prompt: pickPrompt(room.prompts, round),
           answers: [],
           votes: {},
+          voted: [],
           ballotClosed: false,
           eliminatedId: null,
           tiebreaker: null,
@@ -424,8 +439,8 @@ type RoomContextValue = State & {
   startMatch: (id: string, name: string, strangers: Player[]) => void;
   answerTurn: (text: string, timedOut: boolean, replyToId?: string | null) => void;
   playerLeft: (playerId: string) => void;
-  castVote: (targetId: string | null) => void;
-  resolveVote: () => void;
+  castVote: (voterId: string, targetId: string | null) => void;
+  closeBallot: () => void;
   nextRound: () => void;
   spectate: () => void;
   leaveRoom: () => void;
@@ -452,10 +467,11 @@ export function RoomProvider({ children }: PropsWithChildren) {
     []
   );
   const castVote = useCallback(
-    (targetId: string | null) => dispatch({ type: 'castVote', targetId }),
+    (voterId: string, targetId: string | null) =>
+      dispatch({ type: 'castVote', voterId, targetId }),
     []
   );
-  const resolveVote = useCallback(() => dispatch({ type: 'resolveVote' }), []);
+  const closeBallot = useCallback(() => dispatch({ type: 'closeBallot' }), []);
   const nextRound = useCallback(() => dispatch({ type: 'nextRound' }), []);
   const spectate = useCallback(() => dispatch({ type: 'spectate' }), []);
   const leaveRoom = useCallback(() => dispatch({ type: 'leaveRoom' }), []);
@@ -468,7 +484,7 @@ export function RoomProvider({ children }: PropsWithChildren) {
       answerTurn,
       playerLeft,
       castVote,
-      resolveVote,
+      closeBallot,
       nextRound,
       spectate,
       leaveRoom,
@@ -480,7 +496,7 @@ export function RoomProvider({ children }: PropsWithChildren) {
       answerTurn,
       playerLeft,
       castVote,
-      resolveVote,
+      closeBallot,
       nextRound,
       spectate,
       leaveRoom,

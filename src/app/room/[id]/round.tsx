@@ -17,7 +17,7 @@ import { VotePanel } from '@/components/game/vote-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
 import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
-import { useBotTurns } from '@/game/bots';
+import { useBotTurns, useStrangerVotes } from '@/game/bots';
 import { useDropouts } from '@/game/dropouts';
 import { useRoomStore } from '@/game/store';
 import {
@@ -27,8 +27,6 @@ import {
   isYourTurn,
   playerById,
   survivors,
-  voteResult,
-  voteTally,
   YOU_ID,
   youAreAccused,
   youAreOut,
@@ -42,7 +40,7 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function RoundScreen() {
   const router = useRouter();
-  const { room, answerTurn, playerLeft, castVote, resolveVote } = useRoomStore();
+  const { room, answerTurn, playerLeft, castVote, closeBallot } = useRoomStore();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -57,6 +55,7 @@ export default function RoundScreen() {
   const [voteFor, setVoteFor] = useState<string | null>(null);
 
   useBotTurns(room, answerTurn);
+  useStrangerVotes(room, castVote);
   useDropouts(room, playerLeft);
 
   const phase = room?.phase;
@@ -102,14 +101,14 @@ export default function RoundScreen() {
 
   const remaining = useCountdown(room?.turnEndsAt ?? null, onTimeUp);
 
-  // Nobody's phone-down decides the round. The ballot closes on its own with
-  // whatever you had picked, and the tally then moves the room on by itself —
-  // both stages run off the same clock.
+  // Nobody's phone-down holds the room up. Whatever you had picked goes in as
+  // it stands, everyone still out is counted as naming nobody, and the ballot
+  // closes — which is the first moment anybody sees a tally.
   const onVoteTimeUp = useCallback(() => {
-    if (!room || room.phase !== 'voting') return;
-    if (!room.ballotClosed) castVote(out ? null : voteFor);
-    else resolveVote();
-  }, [room, out, voteFor, castVote, resolveVote]);
+    if (!room || room.phase !== 'voting' || room.ballotClosed) return;
+    if (!out && !room.voted.includes(YOU_ID)) castVote(YOU_ID, voteFor);
+    closeBallot();
+  }, [room, out, voteFor, castVote, closeBallot]);
 
   const voteRemaining = useCountdown(room?.voteEndsAt ?? null, onVoteTimeUp);
 
@@ -127,12 +126,13 @@ export default function RoundScreen() {
   const accused = youAreAccused(room);
   const speakerAccused = speaker ? (room.tiebreaker?.includes(speaker.id) ?? false) : false;
 
-  const votesIn = room.ballotClosed;
+  // You are locked once your vote is in — or from the start, if you are out and
+  // only watching the room decide.
+  const youVoted = room.voted.includes(YOU_ID);
+  const locked = youVoted || out;
   // Worth saying out loud only once it is about to cost you a vote.
   const ballotClosing =
-    !votesIn && !out && voteFor === null && voteRemaining !== null && voteRemaining <= 10;
-  // A first tie opens a tiebreaker, not a result — say so on the button.
-  const opensTiebreaker = !inTiebreaker && votesIn && voteResult(room).kind === 'tied';
+    !locked && voteFor === null && voteRemaining !== null && voteRemaining <= 10;
   const accusedNames = (room.tiebreaker ?? [])
     .map((tid) => playerById(room, tid)?.name ?? 'someone')
     .join(' and ');
@@ -279,10 +279,11 @@ export default function RoundScreen() {
           <VotePanel
             targets={alive}
             accused={accusationHeld ? (room.tiebreaker ?? []) : []}
-            selected={votesIn ? (room.votes[YOU_ID] ?? null) : voteFor}
+            selected={youVoted ? (room.votes[YOU_ID] ?? null) : voteFor}
             onSelect={setVoteFor}
-            votesIn={votesIn}
-            tally={votesIn ? voteTally(room) : {}}
+            locked={locked}
+            votedCount={room.voted.length}
+            voterCount={alive.length}
             canVote={!out}
             title={
               inTiebreaker && accusationHeld
@@ -291,29 +292,18 @@ export default function RoundScreen() {
             }
             remaining={voteRemaining}
             note={
-              votesIn
-                ? 'The room moves on in a moment.'
+              youVoted
+                ? 'Waiting on the room. Nobody sees a tally until it is in.'
                 : out
                   ? 'Eliminated players do not get a vote.'
                   : ballotClosing
                     ? 'The ballot is closing. No pick counts as no vote.'
                     : inTiebreaker && accusationHeld
                       ? 'Not convinced by either? Name somebody else.'
-                      : 'Nobody sees the tally until you lock in.'
+                      : 'Nobody sees the tally until the room is in.'
             }
-            actionLabel={
-              votesIn
-                ? opensTiebreaker
-                  ? 'It is a tie — talk it out'
-                  : 'See the result'
-                : out
-                  ? 'Watch the vote'
-                  : 'Lock in vote'
-            }
-            onAction={() => {
-              if (votesIn) resolveVote();
-              else castVote(out ? null : voteFor);
-            }}
+            actionLabel="Lock in vote"
+            onAction={() => castVote(YOU_ID, voteFor)}
           />
         ) : (
         <Composer

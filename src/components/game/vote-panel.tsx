@@ -15,9 +15,11 @@ type VotePanelProps = {
   accused: string[];
   selected: string | null;
   onSelect: (id: string) => void;
-  /** True once the room has voted, which is when the tally becomes readable. */
-  votesIn: boolean;
-  tally: Record<string, number>;
+  /** True once you have locked in and are only waiting on the room. */
+  locked: boolean;
+  /** How much of the room has locked in, for the wait. */
+  votedCount: number;
+  voterCount: number;
   /** False when you are out and only watching the room decide. */
   canVote: boolean;
   title: string;
@@ -40,8 +42,9 @@ export function VotePanel({
   accused,
   selected,
   onSelect,
-  votesIn,
-  tally,
+  locked,
+  votedCount,
+  voterCount,
   canVote,
   title,
   note,
@@ -50,7 +53,7 @@ export function VotePanel({
   onAction,
 }: VotePanelProps) {
   // The last few seconds are when an undecided vote actually costs something.
-  const urgent = remaining !== null && remaining <= 10 && !votesIn;
+  const urgent = remaining !== null && remaining <= 10 && !locked;
 
   return (
     <View style={styles.panel}>
@@ -76,8 +79,7 @@ export function VotePanel({
         {targets.map((player) => {
           const isAccused = accused.includes(player.id);
           const isSelected = selected === player.id;
-          const count = tally[player.id] ?? 0;
-          const disabled = player.isYou || votesIn || !canVote;
+          const disabled = player.isYou || locked || !canVote;
 
           return (
             <Pressable
@@ -110,22 +112,24 @@ export function VotePanel({
                 {player.isYou ? 'You' : player.name}
               </ThemedText>
 
-              {/* Fixed height so the strip does not jump when the tally lands. */}
+              {/* Fixed height so the strip does not jump as the badge changes. */}
               <View style={styles.badge}>
-                {votesIn ? (
-                  count > 0 ? (
-                    <Pill label={`${count}`} tone="warning" />
-                  ) : null
-                ) : isAccused ? (
-                  <Pill label="Tied" tone="warning" />
-                ) : null}
+                {isAccused ? <Pill label="Tied" tone="warning" /> : null}
               </View>
             </Pressable>
           );
         })}
       </View>
 
-      <Button label={actionLabel} disabled={!votesIn && canVote && !selected} onPress={onAction} />
+      {/* Once you are in, there is nothing to press — the room has to catch up
+          before anybody sees a tally. */}
+      {locked ? (
+        <ThemedText type="small" themeColor="textMuted" style={styles.waiting}>
+          {`${votedCount} of ${voterCount} locked in`}
+        </ThemedText>
+      ) : (
+        <Button label={actionLabel} disabled={canVote && !selected} onPress={onAction} />
+      )}
     </View>
   );
 }
@@ -151,6 +155,10 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
+  },
+  waiting: {
+    textAlign: 'center',
+    paddingVertical: Spacing.three,
   },
   strip: {
     flexDirection: 'row',

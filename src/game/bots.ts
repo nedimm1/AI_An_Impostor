@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 
 import { mockAnswer } from './mock';
-import { currentTurnId, YOU_ID, type Answer, type Room } from './types';
+import { currentTurnId, survivors, YOU_ID, type Answer, type Room } from './types';
 
 /** How long a stand-in "thinks" before their answer lands. */
 const MIN_THINK_MS = 1400;
@@ -57,4 +57,58 @@ export function useBotTurns(
     return () => clearTimeout(timer);
     // round + turnIndex identify the turn, so each one is scheduled exactly once.
   }, [phase, isStrangersTurn, turnId, round, turnIndex]);
+}
+
+
+/**
+ * How long the stand-ins take to lock in. Spread across most of the ballot so
+ * the room fills up a name at a time rather than all at once — waiting on the
+ * last holdout is the point of the vote.
+ */
+const MIN_VOTE_MS = 18000;
+const MAX_VOTE_MS = 28000;
+
+/**
+ * The other players' votes. Each lands on its own timer, so the ballot fills
+ * while you watch it, and the last one in is what closes the room.
+ */
+export function useStrangerVotes(
+  room: Room | null,
+  castVote: (voterId: string, targetId: string | null) => void
+) {
+  const castRef = useRef(castVote);
+  castRef.current = castVote;
+
+  const roomRef = useRef<Room | null>(room);
+  roomRef.current = room;
+
+  const voting = room?.phase === 'voting';
+  const id = room?.id;
+  const round = room?.round;
+  const inTiebreaker = room?.tiebreaker != null;
+
+  useEffect(() => {
+    if (!voting) return;
+    const opened = roomRef.current;
+    if (!opened) return;
+
+    const timers = survivors(opened)
+      .filter((p) => !p.isYou)
+      .map((voter) => {
+        const wait = MIN_VOTE_MS + Math.random() * (MAX_VOTE_MS - MIN_VOTE_MS);
+        return setTimeout(() => {
+          const now = roomRef.current;
+          if (!now || now.phase !== 'voting' || now.ballotClosed) return;
+
+          // Read the room at fire time — somebody may have walked out since.
+          const options = survivors(now).filter((t) => t.id !== voter.id);
+          if (options.length === 0) return;
+
+          castRef.current(voter.id, options[Math.floor(Math.random() * options.length)].id);
+        }, wait);
+      });
+
+    return () => timers.forEach(clearTimeout);
+    // One ballot per round, plus one more if the round goes to a tiebreaker.
+  }, [voting, id, round, inTiebreaker]);
 }

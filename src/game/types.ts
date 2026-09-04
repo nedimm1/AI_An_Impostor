@@ -66,8 +66,6 @@ export type MatchSettings = {
    * cast as it stands when the clock runs out.
    */
   voteSeconds: number;
-  /** Seconds the tally is readable before the room moves on by itself. */
-  revealSeconds: number;
   /**
    * Seconds the round's result stands before the next round opens on its own.
    * Being voted out is the exception — that screen is a choice, and it waits.
@@ -115,10 +113,12 @@ export type Room = {
   /** voterId -> targetId. Empty when the ballot closed with nobody named. */
   votes: Record<string, string>;
   /**
-   * True once the ballot has closed and the tally is readable. Kept apart from
-   * `votes` because a room can close a ballot having named nobody at all, and
-   * that is a result the round has to be able to move on from.
+   * Who has locked in, in the order they did. Kept apart from `votes` because
+   * abstaining is a way of having voted: you are done, you just named nobody.
+   * Nobody sees a tally until everyone here is in, and then only on the result.
    */
+  voted: string[];
+  /** True once the ballot has closed. From here the room only reads the result. */
   ballotClosed: boolean;
   /** Who the round's vote removed, or null when the vote settled on nobody. */
   eliminatedId: string | null;
@@ -142,11 +142,10 @@ export type Room = {
 
 export const DEFAULT_SETTINGS: MatchSettings = {
   playerCount: 7,
-  answerSeconds: 45,
+  answerSeconds: 4,
   // Long enough to read the room back, short enough that nobody is waiting on
   // one person to make up their mind.
   voteSeconds: 30,
-  revealSeconds: 8,
   resultSeconds: 15,
   // Dropped from 5 to 1 so a round is quick to play through while testing.
   turnsEach: 1,
@@ -252,6 +251,11 @@ export type VoteResult =
   | { kind: 'eliminated'; playerId: string }
   | { kind: 'tied'; playerIds: string[] }
   | { kind: 'nobody' };
+
+/** Everyone whose vote the ballot is still waiting on. */
+export function awaitedVoters(room: Room) {
+  return survivors(room).filter((p) => !room.voted.includes(p.id));
+}
 
 export function voteResult(room: Room): VoteResult {
   const entries = Object.entries(voteTally(room));
