@@ -19,6 +19,12 @@ export type Player = {
    * Still in the room. False once they walk out, which is permanent — the
    * matchmaker does not hold a seat and there is no rejoin. They stay listed so
    * the room can see who left rather than just noticing it got smaller.
+   *
+   * Only a deliberate leave sets this. Putting the phone down is not leaving:
+   * you stay in, your turns run out without you, and you are still there when
+   * you come back. A dropped connection will have to be told apart from both
+   * once there is a connection to drop — until then there is nothing to model,
+   * and the local clocks recover from absolute deadlines instead.
    */
   connected: boolean;
   /** Voted out. Still listed, but out of the turn order and the vote. */
@@ -34,6 +40,12 @@ export type Answer = {
    */
   kind: 'answer' | 'departure';
   playerId: string;
+  /**
+   * Which round this was said in. The room only ever shows the round it is on,
+   * but the whole match is kept — a report is about something somebody said,
+   * and it is no use if the line was thrown away when the round turned over.
+   */
+  round: number;
   text: string;
   /** True when the clock ran out before they wrote anything. */
   timedOut: boolean;
@@ -45,7 +57,7 @@ export type Answer = {
   inTiebreaker: boolean;
   /**
    * The answer this one is written at, or null when it stands alone. Only ever
-   * points inside the current round — answers are cleared between rounds.
+   * points inside the same round, since that is all the room can see.
    */
   replyToId: string | null;
   createdAt: number;
@@ -90,11 +102,21 @@ export type Room = {
    * you reach a room by being matched into it.
    */
   id: string;
+  /**
+   * Your seat in this room, which is your durable player id (see `profile.ts`).
+   * Carried on the room rather than assumed as a constant, because the id is
+   * the account's, not the seat's, and a server hands it back per match.
+   */
+  youId: string;
   phase: Phase;
   round: number;
   players: Player[];
-  /** Answers to the current round's prompt, in the order they were given. */
-  answers: Answer[];
+  /**
+   * Every line of the match so far, oldest first — answers and departures, all
+   * rounds. The room is only ever shown the round it is on (`roundAnswers`),
+   * but nothing is dropped: this is the record a report is made against.
+   */
+  transcript: Answer[];
   /** Ids of everyone still in, in the order they answer this round. */
   turnOrder: string[];
   /** Index into `turnOrder`. Equals its length once everyone has answered. */
@@ -106,6 +128,12 @@ export type Room = {
    * the tally reveal once it has closed. Null outside the vote.
    */
   voteEndsAt: number | null;
+  /**
+   * Epoch ms the round's result stops standing and the next round opens. Null
+   * outside a verdict, and null for a verdict nothing is waiting on — a match
+   * that is over does not run down to anything.
+   */
+  verdictEndsAt: number | null;
   /** The question this round is built around. */
   prompt: string;
   /** This match's prompt order, drawn when the room was seated. */
@@ -146,7 +174,7 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   // Long enough to read the room back, short enough that nobody is waiting on
   // one person to make up their mind.
   voteSeconds: 30,
-  resultSeconds: 15,
+  resultSeconds: 10,
   // Dropped from 5 to 1 so a round is quick to play through while testing.
   turnsEach: 1,
   // Six humans take five eliminations to whittle down, so a clean match runs
@@ -157,7 +185,6 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   tiebreakerTurnsAccused: 4,
 };
 
-export const YOU_ID = 'you';
 
 /** Small numbers as words, for copy that has to read as a sentence. */
 export function countWord(n: number) {
@@ -180,6 +207,11 @@ export function tiebreakerPrompt(room: Room, accused: string[]) {
   return `It is between ${listNames(names)}. Say your piece before the vote.`;
 }
 
+/** The round the room is currently playing, which is all anybody can read. */
+export function roundAnswers(room: Room) {
+  return room.transcript.filter((a) => a.round === room.round);
+}
+
 export function playerById(room: Room, id: string | null | undefined) {
   if (!id) return undefined;
   return room.players.find((p) => p.id === id);
@@ -188,7 +220,7 @@ export function playerById(room: Room, id: string | null | undefined) {
 /** The answer a reply points at, if it is still on screen. */
 export function answerById(room: Room, id: string | null | undefined) {
   if (!id) return undefined;
-  return room.answers.find((a) => a.id === id && a.kind === 'answer');
+  return roundAnswers(room).find((a) => a.id === id && a.kind === 'answer');
 }
 
 /** Everyone still in the game — not voted out, and not walked out. */
@@ -226,12 +258,12 @@ export function currentTurnNumber(room: Room) {
 }
 
 export function isYourTurn(room: Room) {
-  return currentTurnId(room) === YOU_ID;
+  return currentTurnId(room) === room.youId;
 }
 
 /** True when you are out of the game, whether watching or not. */
 export function youAreOut(room: Room) {
-  return playerById(room, YOU_ID)?.eliminated ?? false;
+  return playerById(room, room.youId)?.eliminated ?? false;
 }
 
 /** targetId -> number of votes cast against them. */
@@ -280,5 +312,5 @@ export function isAccused(room: Room, id: string) {
 
 /** True when the tiebreaker is being held about you. */
 export function youAreAccused(room: Room) {
-  return room.tiebreaker?.includes(YOU_ID) ?? false;
+  return room.tiebreaker?.includes(room.youId) ?? false;
 }

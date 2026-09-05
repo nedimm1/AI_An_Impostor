@@ -12,7 +12,7 @@ import { useRoomStore } from '@/game/store';
 export default function SettingsScreen() {
   const { displayName, setName } = useRoomStore();
 
-  // Local-only preferences for now — nothing here is persisted yet.
+  // The name is persisted; these three are not wired to anything yet.
   const [sound, setSound] = useState(true);
   const [haptics, setHaptics] = useState(true);
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -28,7 +28,7 @@ export default function SettingsScreen() {
           onChangeText={setName}
           placeholder="Not set"
           maxLength={16}
-          hint="Shown to everyone in the room."
+          hint="Shown to everyone in the room. Saved on this device."
         />
 
         <Card title="Preferences" padded={false}>
@@ -51,7 +51,7 @@ export default function SettingsScreen() {
         </Card>
 
         <ThemedText type="small" themeColor="textMuted" style={styles.note}>
-          Preferences are not saved between launches yet.
+          Sound, haptics and reduce motion are not saved or wired up yet.
         </ThemedText>
       </ScrollView>
     </Screen>

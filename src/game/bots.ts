@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 
 import { mockAnswer } from './mock';
-import { currentTurnId, survivors, YOU_ID, type Answer, type Room } from './types';
+import { currentTurnId, roundAnswers, survivors, type Answer, type Room } from './types';
 
 /** How long a stand-in "thinks" before their answer lands. */
 const MIN_THINK_MS = 1400;
@@ -38,13 +38,13 @@ export function useBotTurns(
   // Read at fire time, not capture time, so the timer effect can stay keyed to
   // the turn rather than restarting whenever an answer lands.
   const answersRef = useRef<Answer[]>([]);
-  answersRef.current = room?.answers ?? [];
+  answersRef.current = room ? roundAnswers(room) : [];
 
   const phase = room?.phase;
   const round = room?.round;
   const turnIndex = room?.turnIndex;
   const turnId = room ? currentTurnId(room) : null;
-  const isStrangersTurn = turnId !== null && turnId !== YOU_ID;
+  const isStrangersTurn = turnId !== null && turnId !== room?.youId;
 
   useEffect(() => {
     if (phase !== 'answering' || !isStrangersTurn) return;

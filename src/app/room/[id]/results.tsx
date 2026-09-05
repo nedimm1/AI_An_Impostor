@@ -1,6 +1,12 @@
 import { Redirect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useEffect } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Avatar } from '@/components/ui/avatar';
@@ -11,7 +17,7 @@ import { Screen } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
-import { humansAlive, playerById, survivors, voteTally, YOU_ID } from '@/game/types';
+import { humansAlive, playerById, survivors, voteTally } from '@/game/types';
 import { useCountdown } from '@/hooks/use-countdown';
 import { useLeaveGame } from '@/hooks/use-leave-game';
 
@@ -21,37 +27,56 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function ResultsScreen() {
   const router = useRouter();
-  const { room, nextRound, spectate, leaveRoom } = useRoomStore();
+  const { room, send } = useRoomStore();
 
   const decided = room?.outcome != null;
-  const youWereVotedOut = room?.eliminatedId === YOU_ID;
+  const youWereVotedOut = room != null && room.eliminatedId === room.youId;
 
-  // A round result is a beat, not a decision: it runs out on its own and the
-  // room goes again. Being voted out is the one screen that waits, because
-  // watching on or walking away is a choice only you can make.
-  const autoAdvances = room !== null && !decided && !youWereVotedOut;
+  // The room's clock, not this screen's. A round result is a beat that runs out
+  // on its own; being voted out is the one that waits, and the room knows that
+  // too — it simply stops counting down.
+  const deadline = room?.verdictEndsAt ?? null;
+  const autoAdvances = deadline !== null;
 
   const handleLeave = useLeaveGame(!decided);
 
-  // Fixed on mount — the screen is remounted for each round, so the clock does
-  // not need resetting between them.
-  const [deadline] = useState(
-    () => Date.now() + (room?.settings.resultSeconds ?? 0) * 1000
-  );
+  // The room going again is what moves this screen on, not the other way
+  // round. Whether that came from the clock running out or from you saying you
+  // would keep watching, it arrives here the same way.
+  const roomId = room?.id;
+  const phase = room?.phase;
+  useEffect(() => {
+    if (phase === 'answering' && roomId) {
+      router.replace({ pathname: '/room/[id]/round', params: { id: roomId } });
+    }
+  }, [phase, roomId, router]);
 
-  const goToRound = useCallback(() => {
-    if (!room) return;
-    nextRound();
-    router.replace({ pathname: '/room/[id]/round', params: { id: room.id } });
-  }, [room, nextRound, router]);
+  const remaining = useCountdown(deadline);
 
-  const remaining = useCountdown(autoAdvances ? deadline : null, goToRound);
+  // The label counts in whole seconds, but the track should not step with it.
+  // One timing animation runs the whole remaining stretch on the UI thread, so
+  // the bar slides down evenly instead of chipping away once a second.
+  const progress = useSharedValue(1);
+
+  useEffect(() => {
+    if (!autoAdvances) return;
+    if (deadline === null) return;
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      progress.value = 0;
+      return;
+    }
+    progress.value = 1;
+    progress.value = withTiming(0, { duration: left, easing: Easing.linear });
+  }, [autoAdvances, deadline, progress]);
+
+  const fillStyle = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
 
   if (!room) return <Redirect href="/" />;
 
   const eliminated = playerById(room, room.eliminatedId);
   const impostor = playerById(room, room.impostorId);
-  const yourVote = playerById(room, room.votes[YOU_ID]);
+  const yourVote = playerById(room, room.votes[room.youId]);
   const tally = voteTally(room);
 
   // A ballot can close with nothing in it — everyone let their clock run out
@@ -60,13 +85,10 @@ export default function ResultsScreen() {
   const nobodyVoted = Object.keys(room.votes).length === 0;
   const humansWon = room.outcome === 'humans';
 
-  const handleKeepWatching = () => {
-    spectate();
-    goToRound();
-  };
+  const handleKeepWatching = () => send({ type: 'spectate' });
 
   const handlePlayAgain = () => {
-    leaveRoom();
+    send({ type: 'leave' });
     router.replace('/queue');
   };
 
@@ -223,19 +245,7 @@ export default function ResultsScreen() {
             {/* Runs down rather than fills up — the room is being given back,
                 not made to wait for something. */}
             <View style={styles.track}>
-              <View
-                style={[
-                  styles.fill,
-                  {
-                    width: `${
-                      Math.max(
-                        0,
-                        Math.min(1, (remaining ?? 0) / room.settings.resultSeconds)
-                      ) * 100
-                    }%`,
-                  },
-                ]}
-              />
+              <Animated.View style={[styles.fill, fillStyle]} />
             </View>
             <Button label="Leave the game" variant="ghost" onPress={handleLeave} />
           </>

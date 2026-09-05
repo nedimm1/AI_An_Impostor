@@ -14,12 +14,12 @@ import { useRoomStore } from '@/game/store';
  */
 export function useLeaveGame(needsConfirm = true) {
   const router = useRouter();
-  const { leaveRoom } = useRoomStore();
+  const { send } = useRoomStore();
 
   const leave = useCallback(() => {
-    leaveRoom();
+    send({ type: 'leave' });
     router.replace('/');
-  }, [leaveRoom, router]);
+  }, [send, router]);
 
   const requestLeave = useCallback(() => {
     if (!needsConfirm) {

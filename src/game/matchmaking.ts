@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { makeSessionId, mockStrangers } from './mock';
+import type { Matchmaking } from './transport';
 import type { Player } from './types';
 
 /** Milliseconds before the next stranger is seated. */
@@ -26,21 +27,16 @@ export type Match = {
   strangers: Player[];
 };
 
-type Matchmaking = {
-  /** People seated so far, you included. */
-  found: number;
-  /** Seats the match needs before it starts. */
-  total: number;
-};
-
 /**
  * Counts strangers into a room of `playerCount` and calls `onMatched` once the
- * last seat fills. The callback fires exactly once per mount.
+ * last seat fills. Runs only while `searching`, and returns null when it is
+ * not — you are either in the queue or you are not.
  */
 export function useMatchmaking(
   playerCount: number,
+  searching: boolean,
   onMatched: (match: Match) => void
-): Matchmaking {
+): Matchmaking | null {
   const [found, setFound] = useState(1);
 
   // Held in a ref so a new callback identity on re-render doesn't restart the
@@ -49,6 +45,7 @@ export function useMatchmaking(
   onMatchedRef.current = onMatched;
 
   useEffect(() => {
+    if (!searching) return;
     const strangers = mockStrangers(playerCount - 1);
     let seated = 0;
     let timer: ReturnType<typeof setTimeout>;
@@ -68,7 +65,7 @@ export function useMatchmaking(
     timer = setTimeout(seatOne, nextDelay(true));
 
     return () => clearTimeout(timer);
-  }, [playerCount]);
+  }, [playerCount, searching]);
 
-  return { found, total: playerCount };
+  return searching ? { found, total: playerCount } : null;
 }

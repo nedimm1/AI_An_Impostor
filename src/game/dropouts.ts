@@ -9,7 +9,7 @@
 
 import { useEffect, useRef } from 'react';
 
-import { survivors, YOU_ID, type Room } from './types';
+import { survivors, type Room } from './types';
 
 /** How often somebody walks out over the course of one turn. */
 const DROPOUT_CHANCE_PER_TURN = 0.1;
@@ -41,7 +41,7 @@ export function useDropouts(room: Room | null, playerLeft: (playerId: string) =>
       if (!current) return;
 
       const canLeave = survivors(current).filter(
-        (p) => p.id !== YOU_ID && p.id !== current.impostorId
+        (p) => p.id !== current.youId && p.id !== current.impostorId
       );
       // Leave the room with somebody to play against.
       if (canLeave.length <= 1) return;

@@ -1,14 +1,12 @@
 import { Redirect, useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { useMatchmaking, type Match } from '@/game/matchmaking';
 import { useRoomStore } from '@/game/store';
-import { DEFAULT_SETTINGS } from '@/game/types';
 
 /**
  * The queue. You wait here until the matchmaker has seated a full room, then
@@ -16,17 +14,22 @@ import { DEFAULT_SETTINGS } from '@/game/types';
  */
 export default function QueueScreen() {
   const router = useRouter();
-  const { displayName, startMatch } = useRoomStore();
+  const { displayName, matchmaking, findMatch, room } = useRoomStore();
 
-  const handleMatched = useCallback(
-    ({ id, strangers }: Match) => {
-      startMatch(id, displayName, strangers);
-      router.replace({ pathname: '/room/[id]/round', params: { id } });
-    },
-    [displayName, startMatch, router]
-  );
+  // Asking to be seated is all this screen does. Who the strangers are, how
+  // long they take and when the room opens are not its business.
+  useEffect(findMatch, [findMatch]);
 
-  const { found, total } = useMatchmaking(DEFAULT_SETTINGS.playerCount, handleMatched);
+  // The room turning up is the only signal that the wait is over.
+  const roomId = room?.id;
+  useEffect(() => {
+    if (roomId) {
+      router.replace({ pathname: '/room/[id]/round', params: { id: roomId } });
+    }
+  }, [roomId, router]);
+
+  const found = matchmaking?.found ?? 1;
+  const total = matchmaking?.total ?? 7;
 
   const handleCancel = () => {
     if (router.canGoBack()) router.back();

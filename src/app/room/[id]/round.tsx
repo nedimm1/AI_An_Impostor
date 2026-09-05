@@ -17,8 +17,6 @@ import { VotePanel } from '@/components/game/vote-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
 import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
-import { useBotTurns, useStrangerVotes } from '@/game/bots';
-import { useDropouts } from '@/game/dropouts';
 import { useRoomStore } from '@/game/store';
 import {
   answerById,
@@ -26,8 +24,8 @@ import {
   currentTurnNumber,
   isYourTurn,
   playerById,
+  roundAnswers,
   survivors,
-  YOU_ID,
   youAreAccused,
   youAreOut,
 } from '@/game/types';
@@ -40,7 +38,7 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function RoundScreen() {
   const router = useRouter();
-  const { room, answerTurn, playerLeft, castVote, closeBallot } = useRoomStore();
+  const { room, send } = useRoomStore();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -54,23 +52,20 @@ export default function RoundScreen() {
   // Who you are about to vote for, before you lock it in.
   const [voteFor, setVoteFor] = useState<string | null>(null);
 
-  useBotTurns(room, answerTurn);
-  useStrangerVotes(room, castVote);
-  useDropouts(room, playerLeft);
-
   const phase = room?.phase;
   const id = room?.id;
   const round = room?.round;
 
   // Every answer that lands — yours or theirs — takes the transcript to the end.
-  const answerCount = room?.answers.length ?? 0;
+  const answerCount = room ? roundAnswers(room).length : 0;
   useEffect(() => {
     if (answerCount === 0) return;
     pendingScroll.current = true;
     listRef.current?.scrollToEnd({ animated: true });
   }, [answerCount]);
 
-  // Answers are cleared between rounds, so a target from the last one is gone.
+  // The room only shows the round it is on, so a target from the last one has
+  // gone off screen even though the transcript still holds it.
   useEffect(() => setReplyToId(null), [round]);
   useEffect(() => setVoteFor(null), [round, phase]);
 
@@ -92,28 +87,34 @@ export default function RoundScreen() {
   // A turn that expires still counts as an answer. Whatever you had typed goes
   // to the room as it stands, half a sentence and all — only a box you never
   // wrote in passes the turn empty.
+  //
+  // Only your own turn is sent from here: the room enforces everybody's clock,
+  // including yours, a moment later. This is the app getting your draft in
+  // before it does.
   const onTimeUp = useCallback(() => {
-    if (phase !== 'answering') return;
-    const draft = yourTurn && !out ? (composerRef.current?.takeDraft() ?? '') : '';
-    answerTurn(draft, draft.trim().length === 0, replyToId);
+    if (phase !== 'answering' || !yourTurn || out) return;
+    const draft = composerRef.current?.takeDraft() ?? '';
+    send({ type: 'answer', text: draft, timedOut: draft.trim().length === 0, replyToId });
     setReplyToId(null);
-  }, [phase, yourTurn, out, answerTurn, replyToId]);
+  }, [phase, yourTurn, out, send, replyToId]);
 
   const remaining = useCountdown(room?.turnEndsAt ?? null, onTimeUp);
 
-  // Nobody's phone-down holds the room up. Whatever you had picked goes in as
-  // it stands, everyone still out is counted as naming nobody, and the ballot
-  // closes — which is the first moment anybody sees a tally.
+  // Whatever you had picked goes in as it stands. Closing the ballot is the
+  // room's to do, not this screen's — it does that on its own clock, a moment
+  // after this one, so a last-second pick still counts.
   const onVoteTimeUp = useCallback(() => {
     if (!room || room.phase !== 'voting' || room.ballotClosed) return;
-    if (!out && !room.voted.includes(YOU_ID)) castVote(YOU_ID, voteFor);
-    closeBallot();
-  }, [room, out, voteFor, castVote, closeBallot]);
+    if (!out && !room.voted.includes(room.youId)) send({ type: 'vote', targetId: voteFor });
+  }, [room, out, voteFor, send]);
 
   const voteRemaining = useCountdown(room?.voteEndsAt ?? null, onVoteTimeUp);
 
   if (!room) return <Redirect href="/" />;
 
+  // What the room can see: this round only. The rest of the match is kept on
+  // the room, it is just not what anybody is reading back.
+  const visible = roundAnswers(room);
   const speaker = playerById(room, currentTurnId(room));
   const alive = survivors(room);
   const stillIn = alive.length;
@@ -128,7 +129,7 @@ export default function RoundScreen() {
 
   // You are locked once your vote is in — or from the start, if you are out and
   // only watching the room decide.
-  const youVoted = room.voted.includes(YOU_ID);
+  const youVoted = room.voted.includes(room.youId);
   const locked = youVoted || out;
   // Worth saying out loud only once it is about to cost you a vote.
   const ballotClosing =
@@ -212,7 +213,7 @@ export default function RoundScreen() {
 
         <FlatList
           ref={listRef}
-          data={room.answers}
+          data={visible}
           extraData={replyToId}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
@@ -232,7 +233,7 @@ export default function RoundScreen() {
             const quoted = answerById(room, item.replyToId);
             // Everything above this line was said before the room tied.
             const opensTheTiebreaker =
-              item.inTiebreaker && !room.answers[index - 1]?.inTiebreaker;
+              item.inTiebreaker && !visible[index - 1]?.inTiebreaker;
 
             const marker = opensTheTiebreaker ? (
               <View style={styles.marker}>
@@ -279,7 +280,7 @@ export default function RoundScreen() {
           <VotePanel
             targets={alive}
             accused={accusationHeld ? (room.tiebreaker ?? []) : []}
-            selected={youVoted ? (room.votes[YOU_ID] ?? null) : voteFor}
+            selected={youVoted ? (room.votes[room.youId] ?? null) : voteFor}
             onSelect={setVoteFor}
             locked={locked}
             votedCount={room.voted.length}
@@ -303,13 +304,13 @@ export default function RoundScreen() {
                       : 'Nobody sees the tally until the room is in.'
             }
             actionLabel="Lock in vote"
-            onAction={() => castVote(YOU_ID, voteFor)}
+            onAction={() => send({ type: 'vote', targetId: voteFor })}
           />
         ) : (
         <Composer
           ref={composerRef}
           onSend={(text) => {
-            answerTurn(text, false, replyToId);
+            send({ type: 'answer', text, timedOut: false, replyToId });
             setReplyToId(null);
           }}
           disabled={!yourTurn || out}
