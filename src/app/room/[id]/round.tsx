@@ -18,6 +18,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
 import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
+import { TEST_MODE } from '@/game/testing';
 import {
   answerById,
   currentTurnId,
@@ -84,6 +85,18 @@ export default function RoundScreen() {
   const yourTurn = room ? isYourTurn(room) : false;
   const out = room ? youAreOut(room) : false;
 
+  // Under test the stand-ins say nothing on their own, so their turn is yours
+  // to type. The impostor's is not: that one is the model's, and watching it
+  // answer into a room you wrote is the entire point of the mode.
+  const speakerId = room ? currentTurnId(room) : null;
+  const typingForStranger =
+    TEST_MODE &&
+    room !== null &&
+    room.phase === 'answering' &&
+    speakerId !== null &&
+    speakerId !== room.youId &&
+    speakerId !== room.impostorId;
+
   // A turn that expires still counts as an answer. Whatever you had typed goes
   // to the room as it stands, half a sentence and all — only a box you never
   // wrote in passes the turn empty.
@@ -98,7 +111,9 @@ export default function RoundScreen() {
     setReplyToId(null);
   }, [phase, yourTurn, out, send, replyToId]);
 
-  const remaining = useCountdown(room?.turnEndsAt ?? null, onTimeUp);
+  // No clock under test — the room is waiting on how fast you can type six
+  // people, and `local-transport` has stopped enforcing the deadline anyway.
+  const remaining = useCountdown(TEST_MODE ? null : (room?.turnEndsAt ?? null), onTimeUp);
 
   // Whatever you had picked goes in as it stands. Closing the ballot is the
   // room's to do, not this screen's — it does that on its own clock, a moment
@@ -147,7 +162,9 @@ export default function RoundScreen() {
       : 'Everyone has spoken. Read it back, then vote.'
     : out
       ? 'You are out — watching'
-    : yourTurn
+    : typingForStranger && speaker
+      ? `Answering as ${speaker.name}`
+      : yourTurn
       ? inTiebreaker
         ? accused
           ? 'Your turn — say why it is not you'
@@ -161,7 +178,9 @@ export default function RoundScreen() {
 
   const placeholder = out
     ? 'You are out of the game'
-    : yourTurn
+    : typingForStranger && speaker
+      ? `Type ${speaker.name}'s answer…`
+      : yourTurn
       ? inTiebreaker
         ? accused
           ? 'Why is it not you?'
@@ -310,10 +329,16 @@ export default function RoundScreen() {
         <Composer
           ref={composerRef}
           onSend={(text) => {
-            send({ type: 'answer', text, timedOut: false, replyToId });
+            // Same box, two senders. Which one it is depends only on whose
+            // turn the room is on, so there is nothing to keep in sync.
+            if (typingForStranger && speakerId) {
+              send({ type: 'answerAs', playerId: speakerId, text, replyToId });
+            } else {
+              send({ type: 'answer', text, timedOut: false, replyToId });
+            }
             setReplyToId(null);
           }}
-          disabled={!yourTurn || out}
+          disabled={(!yourTurn && !typingForStranger) || out}
           placeholder={placeholder}
           replyTo={
             replyTarget && replyAuthor

@@ -169,18 +169,21 @@ export type Room = {
 };
 
 export const DEFAULT_SETTINGS: MatchSettings = {
-  playerCount: 7,
-  answerSeconds: 4,
+  playerCount: 5,
+  answerSeconds: 40,
   // Long enough to read the room back, short enough that nobody is waiting on
   // one person to make up their mind.
   voteSeconds: 30,
   resultSeconds: 10,
-  // Dropped from 5 to 1 so a round is quick to play through while testing.
-  turnsEach: 1,
-  // Six humans take five eliminations to whittle down, so a clean match runs
-  // five rounds. Six leaves the room one tied round of slack before the
+  // How much of a conversation a round is. One turn each is everybody dropping
+  // a line and voting; more than that and the room starts talking back. Also
+  // the biggest single dial on what a match costs to run, since the impostor
+  // writes one message per turn and each one carries a longer transcript.
+  turnsEach: 3,
+  // Four humans take three eliminations to whittle down, so a clean match runs
+  // three rounds. Four leaves the room one tied round of slack before the
   // impostor has simply outlasted them.
-  maxRounds: 6,
+  maxRounds: 4,
   tiebreakerTurns: 3,
   tiebreakerTurnsAccused: 4,
 };

@@ -2,31 +2,23 @@
  * Drives the stand-in players' turns. Until there is a server (and a model
  * writing the impostor's answers), a stranger's turn resolves on a timer here
  * so the round can actually advance on one device.
+ *
+ * What they say comes from `mock.ts`; how they behave comes from
+ * `humanlike.ts`. One seat is different: when a proxy is configured, the
+ * player the room is actually hunting gets its line from a model instead of
+ * from the stock list, and is otherwise driven by exactly the same clock as
+ * everybody else. That last part is the point — an impostor that writes
+ * beautifully but answers on a different distribution to the room is findable
+ * without reading a word of it.
  */
 
 import { useEffect, useRef } from 'react';
 
+import { answerDelay, missesTurn, pickReplyTarget, voteDelay } from './humanlike';
+import { impostorEnabled, requestImpostorAnswer, requestImpostorVote } from './impostor';
 import { mockAnswer } from './mock';
+import { TEST_MODE } from './testing';
 import { currentTurnId, roundAnswers, survivors, type Answer, type Room } from './types';
-
-/** How long a stand-in "thinks" before their answer lands. */
-const MIN_THINK_MS = 1400;
-const MAX_THINK_MS = 4600;
-
-/**
- * How often a stand-in writes back at something already said rather than
- * answering the prompt cold. Kept low — a room where everyone quotes everyone
- * reads as noise.
- */
-const REPLY_CHANCE = 0.35;
-
-/** Something recent to write back at, or null to just answer the prompt. */
-function pickReplyTarget(answers: Answer[]) {
-  if (Math.random() > REPLY_CHANCE) return null;
-  const recent = answers.filter((a) => !a.timedOut).slice(-3);
-  if (recent.length === 0) return null;
-  return recent[Math.floor(Math.random() * recent.length)].id;
-}
 
 export function useBotTurns(
   room: Room | null,
@@ -40,37 +32,95 @@ export function useBotTurns(
   const answersRef = useRef<Answer[]>([]);
   answersRef.current = room ? roundAnswers(room) : [];
 
+  const roomRef = useRef<Room | null>(room);
+  roomRef.current = room;
+
   const phase = room?.phase;
   const round = room?.round;
   const turnIndex = room?.turnIndex;
   const turnId = room ? currentTurnId(room) : null;
   const isStrangersTurn = turnId !== null && turnId !== room?.youId;
+  const isImpostorsTurn = turnId !== null && turnId === room?.impostorId;
+  const windowMs = (room?.settings.answerSeconds ?? 0) * 1000;
 
   useEffect(() => {
-    if (phase !== 'answering' || !isStrangersTurn) return;
+    if (phase !== 'answering' || !isStrangersTurn || windowMs <= 0) return;
 
-    const think = MIN_THINK_MS + Math.random() * (MAX_THINK_MS - MIN_THINK_MS);
-    const timer = setTimeout(
-      () => answerRef.current(mockAnswer(), false, pickReplyTarget(answersRef.current)),
-      think
-    );
-    return () => clearTimeout(timer);
+    const openedAt = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
+    // Who this turn is aimed at, decided now rather than at send time. It used
+    // to be drawn after the words came back, which meant the impostor's line
+    // was pinned under a message it had never been shown — the room rendered a
+    // reply that answered nothing. Everyone else gets the same fix for free:
+    // a stock line is no more of a reply than the model's was.
+    const replyToId = pickReplyTarget(answersRef.current);
+
+    /**
+     * How long they take depends on how much they wrote, so nothing can be
+     * scheduled until the words exist. For the impostor the words arrive a
+     * second or two into its own turn, and that time is spent, not added —
+     * the delay is still measured from when the turn opened, so a model that
+     * happens to be slow eats its own thinking time rather than pushing the
+     * whole room later.
+     */
+    const scheduleSend = (text: string) => {
+      const delay = answerDelay(text, windowMs);
+
+      // Somebody who runs past their clock simply never sends. The room's own
+      // turn expiry picks it up and they are shown as having run out of time,
+      // exactly as if a person had put their phone down mid-sentence.
+      if (missesTurn(delay, windowMs)) return;
+
+      timer = setTimeout(
+        () => answerRef.current(text, false, replyToId),
+        Math.max(0, delay - (Date.now() - openedAt))
+      );
+    };
+
+    if (!isImpostorsTurn || !impostorEnabled()) {
+      // Under test the stand-ins have nothing to say: their turn sits open
+      // until it is typed for them. Only the impostor still answers itself,
+      // which is the whole arrangement being tested.
+      if (TEST_MODE) return;
+      scheduleSend(mockAnswer());
+    } else {
+      const opened = roomRef.current;
+      if (!opened) return;
+
+      // The clock is already running while this is in flight, which is why it
+      // is given the turn as its deadline: a line that lands after the turn
+      // has gone is not late, it is nothing.
+      requestImpostorAnswer(opened, windowMs, replyToId).then((text) => {
+        if (cancelled) return;
+        // Null covers every failure — proxy down, model refused, empty
+        // completion, too slow. A stock line is a worse impostor than a model
+        // and a far better one than a blank message, and the room must never
+        // be able to tell that the server fell over.
+        scheduleSend(text ?? mockAnswer());
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
     // round + turnIndex identify the turn, so each one is scheduled exactly once.
-  }, [phase, isStrangersTurn, turnId, round, turnIndex]);
+  }, [phase, isStrangersTurn, isImpostorsTurn, turnId, round, turnIndex, windowMs]);
 }
 
 
 /**
- * How long the stand-ins take to lock in. Spread across most of the ballot so
- * the room fills up a name at a time rather than all at once — waiting on the
- * last holdout is the point of the vote.
- */
-const MIN_VOTE_MS = 18000;
-const MAX_VOTE_MS = 28000;
-
-/**
  * The other players' votes. Each lands on its own timer, so the ballot fills
  * while you watch it, and the last one in is what closes the room.
+ *
+ * The stand-ins vote at random, which is honest: they are not playing, and a
+ * room of stand-ins with opinions would be a room this file was pretending to
+ * simulate. The impostor is the exception. Its vote is a quarter of a
+ * five-player ballot and it is the one seat with something at stake, so a
+ * random one throws away rounds it should have survived — and, worse, spends
+ * them removing the players who were covering for it.
  */
 export function useStrangerVotes(
   room: Room | null,
@@ -86,6 +136,7 @@ export function useStrangerVotes(
   const id = room?.id;
   const round = room?.round;
   const inTiebreaker = room?.tiebreaker != null;
+  const windowMs = (room?.settings.voteSeconds ?? 0) * 1000;
 
   useEffect(() => {
     if (!voting) return;
@@ -95,7 +146,23 @@ export function useStrangerVotes(
     const timers = survivors(opened)
       .filter((p) => !p.isYou)
       .map((voter) => {
-        const wait = MIN_VOTE_MS + Math.random() * (MAX_VOTE_MS - MIN_VOTE_MS);
+        const wait = voteDelay(windowMs);
+        // Somebody who sits past the ballot never locks in. The room closes on
+        // its own clock and counts them as having named nobody, which is a
+        // thing people do and a thing a room of five certain voters is not.
+        // The impostor gets the same draw, and a missed one costs no call.
+        if (missesTurn(wait, windowMs)) return null;
+
+        // Asked as the ballot opens and read when this seat locks in, so the
+        // thinking happens inside the wait rather than on top of it. Whoever
+        // it names is checked against the room again at fire time.
+        let picked: string | null = null;
+        if (voter.id === opened.impostorId && impostorEnabled()) {
+          requestImpostorVote(opened, windowMs).then((id) => {
+            picked = id;
+          });
+        }
+
         return setTimeout(() => {
           const now = roomRef.current;
           if (!now || now.phase !== 'voting' || now.ballotClosed) return;
@@ -104,11 +171,18 @@ export function useStrangerVotes(
           const options = survivors(now).filter((t) => t.id !== voter.id);
           if (options.length === 0) return;
 
-          castRef.current(voter.id, options[Math.floor(Math.random() * options.length)].id);
+          // A name that has left the room since it was chosen is no longer a
+          // vote. Failing back to random is not a worse impostor than the one
+          // that voted at random all along.
+          const chosen = options.some((o) => o.id === picked)
+            ? picked!
+            : options[Math.floor(Math.random() * options.length)].id;
+
+          castRef.current(voter.id, chosen);
         }, wait);
       });
 
-    return () => timers.forEach(clearTimeout);
+    return () => timers.forEach((timer) => timer && clearTimeout(timer));
     // One ballot per round, plus one more if the round goes to a tiebreaker.
-  }, [voting, id, round, inTiebreaker]);
+  }, [voting, id, round, inTiebreaker, windowMs]);
 }

@@ -31,7 +31,13 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+#
+# `.env*.local` alone does not cover a plain `.env`, which is exactly where an
+# Anthropic key would end up: Expo reads `.env`, and the impostor's proxy is
+# configured through the environment. The negation keeps a committed template.
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo

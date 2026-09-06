@@ -9,19 +9,19 @@ import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
 import { countWord, DEFAULT_SETTINGS } from '@/game/types';
 
-/** Decorative lineup — a room's worth of "players", one of them unreadable. */
-const LINEUP = [
-  { id: 'lineup-a', name: 'Mara' },
-  { id: 'lineup-b', name: 'Deniz' },
-  { id: 'lineup-c', name: 'Kofi' },
-  { id: 'lineup-d', name: '??' },
-  { id: 'lineup-e', name: 'Sasha' },
-  { id: 'lineup-f', name: 'Ines' },
-  { id: 'lineup-g', name: 'Rune' },
-];
+/**
+ * Decorative lineup — a room's worth of "players", one of them unreadable.
+ * Sized off the settings so the picture on the front page is the room you are
+ * actually put in, whatever the matchmaker is set to seat.
+ */
+const LINEUP_NAMES = ['Mara', 'Deniz', 'Kofi', '??', 'Sasha', 'Ines', 'Rune'];
+const LINEUP = Array.from({ length: DEFAULT_SETTINGS.playerCount }, (_, i) => ({
+  id: `lineup-${i}`,
+  name: LINEUP_NAMES[i % LINEUP_NAMES.length],
+}));
 
-/** Which slot in the lineup is the one you cannot read. */
-const IMPOSTOR_SLOT = 3;
+/** Which slot in the lineup is the one you cannot read — always the middle. */
+const IMPOSTOR_SLOT = Math.floor(DEFAULT_SETTINGS.playerCount / 2);
 
 export default function HomeScreen() {
   const router = useRouter();

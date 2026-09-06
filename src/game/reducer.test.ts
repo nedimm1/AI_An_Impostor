@@ -6,6 +6,7 @@
 
 import { roomReducer, type MatchAction } from './reducer';
 import {
+  DEFAULT_SETTINGS,
   playerById,
   roundAnswers,
   survivors,
@@ -16,6 +17,16 @@ import {
 
 const YOUR_ID = 'you-uuid';
 const YOUR_NAME = 'Nedim';
+
+/** Five seats: you and four strangers. */
+const SEATS = 5;
+/**
+ * Read off the settings rather than written in, so turning the round length
+ * dial does not break tests that are not about round length.
+ */
+const { turnsEach } = DEFAULT_SETTINGS;
+/** Lines a full round produces with nobody timing out or walking away. */
+const LINES_PER_ROUND = SEATS * turnsEach;
 
 /**
  * The room is seated with `Math.random`, so it is pinned for the duration of a
@@ -98,8 +109,8 @@ describe('seating', () => {
     const r = room(seated());
     expect(r.round).toBe(1);
     expect(r.phase).toBe('answering');
-    expect(r.players).toHaveLength(5);
-    expect(r.turnOrder).toHaveLength(5);
+    expect(r.players).toHaveLength(SEATS);
+    expect(r.turnOrder).toHaveLength(LINES_PER_ROUND);
   });
 });
 
@@ -108,7 +119,7 @@ describe('answering', () => {
     const state = answerEveryTurn(seated());
     expect(room(state).phase).toBe('voting');
     expect(room(state).voteEndsAt).not.toBeNull();
-    expect(roundAnswers(room(state))).toHaveLength(5);
+    expect(roundAnswers(room(state))).toHaveLength(LINES_PER_ROUND);
   });
 
   it('drops a reply pointing at an answer nobody can see', () => {
@@ -143,7 +154,7 @@ describe('the transcript', () => {
   it('keeps every round, and shows only the one being played', () => {
     const voted = everyoneVotesFor(answerEveryTurn(seated()), 'p_deniz');
     const roundOneLines = room(voted).transcript.length;
-    expect(roundOneLines).toBe(5);
+    expect(roundOneLines).toBe(LINES_PER_ROUND);
 
     const next = play(voted, { type: 'nextRound' });
     // Nothing was thrown away, but the room has moved on.
@@ -268,7 +279,8 @@ describe('walking out', () => {
 
     expect(playerById(room(left), 'p_kofi')?.connected).toBe(false);
     expect(room(left).turnOrder).not.toContain('p_kofi');
-    expect(room(left).turnOrder).toHaveLength(before - 1);
+    // Every turn of theirs goes, not just the next one.
+    expect(room(left).turnOrder).toHaveLength(before - turnsEach);
     expect(survivors(room(left))).toHaveLength(4);
   });
 

@@ -11,8 +11,15 @@ import { useEffect, useRef } from 'react';
 
 import { survivors, type Room } from './types';
 
-/** How often somebody walks out over the course of one turn. */
-const DROPOUT_CHANCE_PER_TURN = 0.1;
+/**
+ * How often somebody walks out over the course of one round.
+ *
+ * Per round rather than per turn, because a round is not a fixed number of
+ * turns: it is players times `turnsEach`, and it shrinks as the room does.
+ * A per-turn chance quietly triples when the round length dial moves, which
+ * is how a room of seven ends up empty by round three.
+ */
+const DROPOUT_CHANCE_PER_ROUND = 0.5;
 
 /** They go mid-turn rather than neatly between them, as people actually do. */
 const MIN_LEAVE_MS = 800;
@@ -30,10 +37,13 @@ export function useDropouts(room: Room | null, playerLeft: (playerId: string) =>
   const phase = room?.phase;
   const round = room?.round;
   const turnIndex = room?.turnIndex;
+  const turnsThisRound = room?.turnOrder.length ?? 0;
 
   useEffect(() => {
-    if (phase !== 'answering') return;
-    if (Math.random() > DROPOUT_CHANCE_PER_TURN) return;
+    if (phase !== 'answering' || turnsThisRound === 0) return;
+    // Spread the round's chance evenly across the turns it actually has.
+    const perTurn = 1 - Math.pow(1 - DROPOUT_CHANCE_PER_ROUND, 1 / turnsThisRound);
+    if (Math.random() > perTurn) return;
 
     const wait = MIN_LEAVE_MS + Math.random() * (MAX_LEAVE_MS - MIN_LEAVE_MS);
     const timer = setTimeout(() => {
@@ -51,5 +61,5 @@ export function useDropouts(room: Room | null, playerLeft: (playerId: string) =>
 
     return () => clearTimeout(timer);
     // round + turnIndex identify the turn, so each one is rolled for once.
-  }, [phase, round, turnIndex]);
+  }, [phase, round, turnIndex, turnsThisRound]);
 }

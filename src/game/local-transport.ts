@@ -20,6 +20,7 @@ import { useDropouts } from './dropouts';
 import { useMatchmaking, type Match } from './matchmaking';
 import type { Profile } from './profile';
 import { roomReducer, type MatchAction } from './reducer';
+import { TEST_MODE } from './testing';
 import type { Intent, MatchTransport } from './transport';
 import { DEFAULT_SETTINGS, type Room } from './types';
 
@@ -101,7 +102,12 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
   // A turn that expires still costs the turn. The screen submits your own
   // draft on your clock; this is what happens to anyone it did not hear from,
   // you included.
-  const turnEndsAt = room?.phase === 'answering' ? room.turnEndsAt : null;
+  //
+  // Nothing expires while you are typing the room's answers yourself. Six
+  // seats at forty seconds is not a test, it is a typing exercise, and the
+  // clock is not what is being tested.
+  const turnEndsAt =
+    room?.phase === 'answering' && !TEST_MODE ? room.turnEndsAt : null;
   useEffect(() => {
     if (turnEndsAt === null) return;
     const timer = setTimeout(
@@ -138,6 +144,21 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
   const send = useCallback((intent: Intent) => {
     const current = roomRef.current;
     if (!current) return;
+
+    // Somebody else's turn, typed by you. The reducer has no idea a seat
+    // changed hands — it answers whoever's turn it currently is, which is
+    // exactly the seat the screen was showing you.
+    if (intent.type === 'answerAs') {
+      if (!TEST_MODE) return;
+      if (current.turnOrder[current.turnIndex] !== intent.playerId) return;
+      dispatch({
+        type: 'answerTurn',
+        text: intent.text,
+        timedOut: false,
+        replyToId: intent.replyToId,
+      });
+      return;
+    }
 
     const action: MatchAction | null =
       intent.type === 'answer'

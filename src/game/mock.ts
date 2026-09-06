@@ -57,6 +57,26 @@ const STOCK_ANSWERS = [
   'giving the answer I gave at 14 because nothing has improved',
   'I typed something else first and deleted it, take that as you will',
   'no notes, no elaboration, that is the answer',
+  'this is going to be a boring answer sorry',
+  'ok wait I have a good one for this actually',
+  'depends entirely on the day you are asking me',
+  'I feel like I should have a better answer than this',
+  'genuinely the first thing that came into my head',
+  'I have never been asked this and it shows',
+  'my answer changes depending on who is asking',
+  'putting far more thought into this than I should',
+  'there is a long story here and nobody wants it',
+  'I am going to regret being honest about this',
+  'not the answer I want to give but it is the true one',
+  'everyone always looks at me funny when I say this',
+  'I asked my flatmate and now we are arguing',
+  'this one is genuinely hard, give me a second',
+  'I could go either way on this honestly',
+  'saying the obvious one before somebody else does',
+  'do not judge me for this one',
+  'took me a minute to remember, it has been a while',
+  'the honest answer and the good answer are different here',
+  'I typed three versions of this and picked the worst one',
 ];
 
 export function makeId(prefix: string) {
@@ -83,16 +103,23 @@ export function mockStrangers(count: number): Player[] {
   }));
 }
 
-let lastAnswerIndex = -1;
-
 /**
- * What a stand-in player types when their turn comes round. Never repeats the
- * line it just used — a round holds a dozen-plus of these and duplicates
- * back to back read as a bug rather than as filler.
+ * How far back to remember. A round of seven players at three turns each is
+ * twenty-one messages, so avoiding only the line just used is not enough —
+ * two people saying the same sentence in one round reads as a bug, and it is
+ * the first thing anybody notices about the room.
  */
+const NO_REPEATS_WITHIN = 16;
+
+const recentAnswers: string[] = [];
+
+/** What a stand-in player types when their turn comes round. */
 export function mockAnswer() {
-  let index = Math.floor(Math.random() * STOCK_ANSWERS.length);
-  if (index === lastAnswerIndex) index = (index + 1) % STOCK_ANSWERS.length;
-  lastAnswerIndex = index;
-  return STOCK_ANSWERS[index];
+  const fresh = STOCK_ANSWERS.filter((a) => !recentAnswers.includes(a));
+  const pool = fresh.length > 0 ? fresh : STOCK_ANSWERS;
+  const answer = pool[Math.floor(Math.random() * pool.length)];
+
+  recentAnswers.push(answer);
+  if (recentAnswers.length > NO_REPEATS_WITHIN) recentAnswers.shift();
+  return answer;
 }

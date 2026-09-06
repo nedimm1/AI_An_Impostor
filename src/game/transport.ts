@@ -26,7 +26,18 @@ export type Intent =
   /** Voted out, but staying to watch. */
   | { type: 'spectate' }
   /** Walk out. Final — there is no seat held and no way back in. */
-  | { type: 'leave' };
+  | { type: 'leave' }
+  /**
+   * Answer as somebody else. The one intent that breaks the rule above, and
+   * it exists only under `TEST_MODE`: with the stand-ins switched off, the
+   * six other seats are typed by whoever is holding the phone.
+   *
+   * It is kept as its own intent rather than folded into `answer` on purpose.
+   * A server would reject this outright, and the shape of the thing it would
+   * reject should be obvious at the seam rather than hidden inside a flag on
+   * a legitimate one.
+   */
+  | { type: 'answerAs'; playerId: string; text: string; replyToId: string | null };
 
 /** Where you are in the queue, or null when you are not in it. */
 export type Matchmaking = {

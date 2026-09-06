@@ -10,6 +10,7 @@
  */
 
 import { makeId, shuffledPrompts } from './mock';
+import { IMPOSTOR_NAME, TEST_MODE } from './testing';
 import {
   awaitedVoters,
   currentTurnId,
@@ -81,6 +82,11 @@ function matchedRoom(id: string, yourId: string, name: string, strangers: Player
   players.splice(Math.floor(Math.random() * (players.length + 1)), 0, you);
 
   const impostor = strangers[Math.floor(Math.random() * strangers.length)];
+  // Testing only, and a rename rather than a reveal: the room, the model and
+  // the transcript all have to agree on what it is called, or it cannot pick
+  // its own lines out of the room it is reading. See `testing.ts`.
+  if (TEST_MODE && impostor) impostor.name = IMPOSTOR_NAME;
+
   const prompts = shuffledPrompts();
 
   return {
