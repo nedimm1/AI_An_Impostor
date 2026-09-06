@@ -110,9 +110,21 @@ describe('who talks back to whom', () => {
     SAMPLES;
 
   it('piles into a thread that has already started', () => {
-    const cold = [answer('a'), answer('b')];
-    const thread = [answer('a'), answer('b', { replyToId: 'a' })];
+    const cold = [answer('a'), answer('b'), answer('c'), answer('d'), answer('e')];
+    const thread = [answer('a'), answer('b'), answer('c'), answer('d'), answer('e', { replyToId: 'a' })];
     expect(replyRate(thread)).toBeGreaterThan(replyRate(cold) * 1.8);
+  });
+
+  it('never talks back at the only person who has spoken', () => {
+    // Going second into a room with one line in it. Answering that line puts
+    // the room's attention on the pair of you, which is the last thing the
+    // impostor wants and not what people do anyway.
+    expect(replyRate([answer('a')])).toBe(0);
+  });
+
+  it('warms up as the round fills', () => {
+    const upTo = (n: number) => Array.from({ length: n }, (_, i) => answer(`p${i}`));
+    expect(replyRate(upTo(2))).toBeLessThan(replyRate(upTo(5)));
   });
 
   it('reaches for what was just said far more than for what came before', () => {

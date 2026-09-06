@@ -14,7 +14,14 @@
  * reason the transport seam exists.
  */
 
-import { answerById, playerById, roundAnswers, survivors, type Room } from './types';
+import {
+  answerById,
+  currentTurnNumber,
+  playerById,
+  roundAnswers,
+  survivors,
+  type Room,
+} from './types';
 
 /**
  * Where the impostor is running. Unset means no impostor: the room falls back
@@ -43,6 +50,17 @@ export type ImpostorTurn = {
   roundLines: { name: string; text: string }[];
   /** What it said in earlier rounds, which only it can still see. */
   ownHistory: string[];
+  /**
+   * Which time round the room this is, 1-based, and how many there are.
+   *
+   * Sent because turn one and turn three are not the same turn and were being
+   * prompted as though they were. On turn one the question is unanswered and
+   * answering it is the job; by turn three everybody has answered, the room is
+   * talking, and a model still being told to answer the question has nothing
+   * left to say and says two words of nothing.
+   */
+  turnNumber: number;
+  turnsEach: number;
   /** The room is talking out a tied vote rather than answering a prompt. */
   tiebreaker: boolean;
   /** It is one of the two the room is deciding between. */
@@ -81,6 +99,8 @@ export function impostorTurn(room: Room, replyToId: string | null = null): Impos
     // swaps it in, so there is only ever one prompt to read.
     prompt: room.prompt,
     answerSeconds: room.settings.answerSeconds,
+    turnNumber: currentTurnNumber(room),
+    turnsEach: room.settings.turnsEach,
     tiebreaker: room.tiebreaker !== null,
     accused: room.tiebreaker?.includes(room.impostorId ?? '') ?? false,
     replyTo:

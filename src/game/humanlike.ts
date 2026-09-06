@@ -82,9 +82,19 @@ export function voteDelay(windowMs: number) {
  * Talking back is contagious. A room answering the prompt cold keeps doing
  * that; the moment somebody quotes somebody, the next few people pile in. A
  * flat per-message chance produces neither, and reads as evenly sprinkled.
+ *
+ * It also has to build. The second person to speak in a round is answering a
+ * question in a room with one line in it, and a room with one line in it is
+ * not yet a conversation — somebody who opens by talking back at the only
+ * other person who has spoken has put the whole room's attention on the two of
+ * them, which is a thing people notice and, for the impostor, exactly the
+ * thing it cannot afford. So the cold chance ramps with how much is on screen
+ * and starts at nothing.
  */
-const REPLY_CHANCE_COLD = 0.18;
+const REPLY_CHANCE_COLD = 0.2;
 const REPLY_CHANCE_IN_THREAD = 0.55;
+/** Lines that have to be up before talking back is at full strength. */
+const REPLY_RAMP = 4;
 
 /** How far back people bother to reach. Recent first, and steeply so. */
 const REACH_BACK = 4;
@@ -100,7 +110,9 @@ export function pickReplyTarget(answers: Answer[]) {
   if (spoken.length === 0) return null;
 
   const lastWasReply = spoken[spoken.length - 1].replyToId !== null;
-  const chance = lastWasReply ? REPLY_CHANCE_IN_THREAD : REPLY_CHANCE_COLD;
+  // Nobody replies to the first thing anybody said. From there it climbs.
+  const warmth = Math.min(1, (spoken.length - 1) / REPLY_RAMP);
+  const chance = lastWasReply ? REPLY_CHANCE_IN_THREAD : REPLY_CHANCE_COLD * warmth;
   if (Math.random() > chance) return null;
 
   // Weighted so the thing just said is far likelier to be picked up than

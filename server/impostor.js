@@ -1,405 +1,1486 @@
 /**
- * The impostor's brain.
+ * AI: AN IMPOSTOR
+ * ----------------
+ * The AI player / impostor brain.
  *
- * This is the half of the game that never ships. It holds the persona, the
- * system prompt and the model call, and it lives outside `src/` for a reason
- * that is not tidiness: anyone can unzip an app bundle. A system prompt in
- * there tells the room exactly what the impostor was told to do, and a client
- * that composes its own prompt can be edited into composing a different one.
- * So the app sends facts about the room and gets back a line, and everything
- * that decides what that line is stays here.
+ * Goals:
+ * - Feel like another player, not an AI pretending to be human
+ * - React naturally to the room
+ * - Remember what it has said during the match
+ * - Avoid repeatedly mentioning its persona
+ * - Vary message length and behavior
+ * - Handle accusations without suddenly becoming a lawyer
+ * - Make believable social mistakes
+ * - Keep conversation behavior separate from voting strategy
  *
- * `server/index.js` puts an HTTP door on this. `scripts/impostor-sample.js`
- * calls it directly, which is the point of it being its own module — the
- * read-through and the game exercise the same prompt, so a sample that reads
- * well is evidence about the thing that ships rather than about a script.
+ * This module should stay server-side.
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
 
 const MODEL = 'claude-opus-5';
 
-/**
- * Who the impostor is pretending to be. Three facts, no more: a persona this
- * size gives the answers something to be consistent about across a match, and
- * a longer one starts writing them.
+let client = null;
+
+/* ============================================================
+ * PERSONAS
+ * ============================================================
  *
- * The first read-through found the opposite failure to the one expected — the
- * persona came through too strongly, with a flatmate turning up in three
- * unrelated answers. People do not work their living situation into a tenth of
- * what they say, so the prompt below now pushes back on it explicitly.
+ * These are intentionally subtle.
+ *
+ * The model should NOT constantly talk about these facts.
+ * They mainly provide a consistent background when relevant.
  */
+
 const PERSONAS = [
-  { brief: '26, shares a flat in a mid-sized city, works shifts in a warehouse.' },
-  { brief: '31, teaches secondary school, has a dog and a partner who cooks.' },
-  { brief: '19, first year at university, lives in halls, plays five-a-side badly.' },
-  { brief: '44, works from home doing something with spreadsheets, two kids at school.' },
-  { brief: '35, fits kitchens, drives a van full of other people\'s cupboards.' },
-  { brief: '23, works front of house at a chain restaurant, moved cities last year.' },
+  {
+    brief: '26, shares a flat in a mid-sized city, works shifts in a warehouse.',
+    traits: ['practical', 'casual', 'likes simple food'],
+  },
+  {
+    brief: '31, teaches secondary school, has a dog and a partner who cooks.',
+    traits: ['patient', 'slightly opinionated', 'likes routine'],
+  },
+  {
+    brief: '19, first year at university, lives in halls, plays five-a-side badly.',
+    traits: ['casual', 'impulsive', 'easily distracted'],
+  },
+  {
+    brief: '44, works from home doing something with spreadsheets, two kids at school.',
+    traits: ['practical', 'dry', 'prefers familiar things'],
+  },
+  {
+    brief: '35, fits kitchens, drives a van full of other people\'s cupboards.',
+    traits: ['straightforward', 'blunt', 'likes things that work'],
+  },
+  {
+    brief: '23, works front of house at a chain restaurant, moved cities last year.',
+    traits: ['social', 'casual', 'not overly serious'],
+  },
 ];
 
-/**
- * How long an answer is, drawn per turn rather than described to the model.
+
+/* ============================================================
+ * BEHAVIOR DISTRIBUTIONS
+ * ============================================================ */
+
+/*
+ * Humans don't produce the same size message every turn.
  *
- * This exists because of a measured failure. Asked to "vary the shape between
- * turns", the model produced 43 answers between 19 and 48 characters with a
- * standard deviation of six, and appended a trailing clause to 51% of them —
- * "olives, texture kills it for me" — where the human-written lines did it
- * five times in thirty-two. A model asked to be varied centres on the middle
- * of whatever band you describe. It cannot roll its own dice.
- *
- * So the dice are rolled here and the model is told the result. This is the
- * same move `src/game/humanlike.ts` makes for timing, for the same reason, and
- * the two should be read together: behaviour that has to look unplanned comes
- * out of a distribution in code, never out of an instruction.
- *
- * The weights are what people actually type in a chat room. Most answers are
- * very short. A few are not. Almost none are the average.
+ * Keep most answers short, but allow occasional longer ones.
  */
 const LENGTHS = [
-  { weight: 42, min: 1, max: 3, label: 'one to three words' },
-  { weight: 31, min: 4, max: 7, label: 'four to seven words' },
-  { weight: 17, min: 8, max: 13, label: 'eight to thirteen words' },
-  { weight: 8, min: 14, max: 20, label: 'fourteen to twenty words' },
-  { weight: 2, min: 21, max: 30, label: 'a rambling twenty to thirty words' },
+  { weight: 38, min: 1, max: 3, label: 'one to three words' },
+  { weight: 32, min: 4, max: 7, label: 'four to seven words' },
+  { weight: 19, min: 8, max: 13, label: 'eight to thirteen words' },
+  { weight: 9, min: 14, max: 20, label: 'fourteen to twenty words' },
+  { weight: 2, min: 21, max: 30, label: 'twenty to thirty words' },
 ];
 
-/** How often an answer carries a trailing clause. Measured at 16% in the stock lines. */
-const CLAUSE_CHANCE = 0.16;
-/** How often it is a list of things rather than one thing. Lists take commas. */
-const LIST_CHANCE = 0.08;
-/**
- * How often a line is typed the way a phone actually gets typed — dropped
- * apostrophes, a shortened word, the odd slip. Raised from 0.22 after a
- * playthrough: at that rate most lines came out cleanly punctuated, which is
- * not what a group chat looks like.
+/*
+ * Deliberately lower than the old implementation.
  *
- * It stays a draw rather than a standing instruction for the usual reason. Told
- * to "write with typos", a model puts one in every line and the costume is
- * louder than the tell it was hiding.
+ * If nearly half the messages contain a typo/apostrophe trick,
+ * the pattern itself becomes suspicious.
  */
-const SLOPPY_CHANCE = 0.45;
+const IMPERFECTION_CHANCE = 0.22;
 
-/**
- * How often a turn opens by reacting to the room instead of going straight at
- * the question — "lol same", "wait what", "ok that's grim" and then the
- * answer. Only ever drawn when there is something on screen to react to.
+/*
+ * Some messages react to the room before answering.
  */
-const REACT_CHANCE = 0.35;
+const REACTION_CHANCE = 0.30;
+
+/*
+ * Sometimes the player asks a tiny follow-up question.
+ */
+const QUESTION_CHANCE = 0.08;
+
+/*
+ * Sometimes the player gives two related things.
+ */
+const LIST_CHANCE = 0.07;
+
+/*
+ * Sometimes a thought naturally continues after a comma.
+ */
+const CLAUSE_CHANCE = 0.13;
+
+/*
+ * Humans occasionally don't respond directly to another person's
+ * message even when they could.
+ */
+const IGNORE_SOCIAL_CUE_CHANCE = 0.15;
+
+
+/* ============================================================
+ * RANDOM HELPERS
+ * ============================================================ */
 
 function weighted(options) {
-  const total = options.reduce((sum, o) => sum + o.weight, 0);
+  const total = options.reduce((sum, option) => sum + option.weight, 0);
+
   let roll = Math.random() * total;
+
   for (const option of options) {
     roll -= option.weight;
-    if (roll <= 0) return option;
+
+    if (roll <= 0) {
+      return option;
+    }
   }
+
   return options[options.length - 1];
 }
 
-/** The shape of one turn, drawn fresh each time. */
-function answerShape(hasRoom = false) {
-  const length = weighted(LENGTHS);
-  const list = Math.random() < LIST_CHANCE;
+
+function randomItem(array) {
+  if (!array.length) return null;
+
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+
+/* ============================================================
+ * ANSWER SHAPE
+ * ============================================================ */
+
+/**
+ * Decide what kind of message the AI should produce.
+ *
+ * Important:
+ * The model doesn't decide how "random" it should be.
+ * Code decides it first.
+ */
+function answerShape(
+  hasRoom = false,
+  {
+    laterTurn = false,
+    underPressure = false,
+    tiebreaker = false,
+  } = {}
+) {
+  let bands = [...LENGTHS];
+
+  /*
+   * Later turns should generally have a little more substance.
+   */
+  if (laterTurn) {
+    bands = bands.map((band) => {
+      if (band.max <= 3) {
+        return {
+          ...band,
+          weight: Math.max(8, Math.floor(band.weight * 0.35)),
+        };
+      }
+
+      return band;
+    });
+  }
+
+  /*
+   * Accusations need enough room to actually defend itself.
+   */
+  if (underPressure || tiebreaker) {
+    bands = bands.map((band) => {
+      if (band.max <= 3) {
+        return {
+          ...band,
+          weight: 0,
+        };
+      }
+
+      return band;
+    });
+  }
+
+  const length = weighted(bands);
+
+  const list =
+    !underPressure &&
+    !tiebreaker &&
+    Math.random() < LIST_CHANCE;
+
+  const clause =
+    !list &&
+    !underPressure &&
+    !tiebreaker &&
+    Math.random() < CLAUSE_CHANCE;
+
+  const reaction =
+    hasRoom &&
+    !tiebreaker &&
+    Math.random() < REACTION_CHANCE;
+
+  const askQuestion =
+    hasRoom &&
+    !underPressure &&
+    !tiebreaker &&
+    Math.random() < QUESTION_CHANCE;
+
+  const sloppy =
+    Math.random() < IMPERFECTION_CHANCE;
+
   return {
     length: length.label,
     words: [length.min, length.max],
-    // A list is a comma that belongs there, so the two are drawn apart and
-    // only one of them is a trailing clause.
-    clause: !list && Math.random() < CLAUSE_CHANCE,
     list,
-    sloppy: Math.random() < SLOPPY_CHANCE,
-    react: hasRoom && Math.random() < REACT_CHANCE,
+    clause,
+    react: reaction,
+    askQuestion,
+    sloppy,
   };
 }
 
+
+/* ============================================================
+ * TEXT CLEANUP
+ * ============================================================ */
+
 /**
- * Cut a trailing clause the model was asked not to write.
- *
- * Measured, second read-through: told "no trailing clause", it wrote one on 14
- * of 35 turns anyway — "eggs, always a full box", "bus, two stops then a
- * walk", "dede, from an uncle who never explained it". Every one of those is
- * the same sentence the first read-through was full of, and every one of them
- * is a better answer with the tail taken off, because "eggs" is what a person
- * types.
- *
- * Two attempts at instructing it away failed, which is the same lesson as the
- * lengths: a shape that has to hold across a match is enforced, not requested.
- * So this is the enforcement. A turn drawn as a list keeps its commas, since
- * those are commas that belong.
+ * Remove accidental trailing clauses when the chosen shape
+ * didn't allow one.
  */
 function trimClause(text, shape) {
-  if (shape.clause || shape.list) return text;
+  if (!text) return text;
+
+  if (shape.clause || shape.list) {
+    return text;
+  }
+
   const comma = text.indexOf(',');
-  if (comma === -1) return text;
+
+  if (comma === -1) {
+    return text;
+  }
+
   const head = text.slice(0, comma).trim();
-  // Not worth the cut if it leaves nothing behind — a line that opens on a
-  // one-word fragment was never the answer plus a clause in the first place.
-  return head.length >= 2 ? head : text;
+
+  if (head.length >= 2) {
+    return head;
+  }
+
+  return text;
 }
 
+
 /**
- * A life, keyed to the match so one room gets one person all the way through.
- *
- * The *name* is not chosen here. It comes with the turn, because the
- * matchmaker seats the impostor and gives it a name the room can already see —
- * inventing another one here would have it answering to the wrong one in front
- * of everybody, and it has to pick its own lines out of a transcript.
+ * Remove common formatting the model might accidentally add.
  */
+function cleanText(text) {
+  if (!text) return '';
+
+  let result = String(text)
+    .trim()
+    .replace(/^["']/, '')
+    .replace(/["']$/, '')
+    .trim();
+
+  /*
+   * Models sometimes answer with:
+   *
+   * "pizza"
+   *
+   * or:
+   *
+   * pizza.
+   *
+   * We want chat-style output.
+   */
+
+  result = result
+    .replace(/\r?\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  /*
+   * Remove em dashes because they are disproportionately
+   * associated with generated text.
+   */
+  result = result.replace(/[—–]/g, '-');
+
+  /*
+   * Remove semicolons and colons.
+   */
+  result = result.replace(/[;:]/g, '');
+
+  /*
+   * Lowercase everything.
+   */
+  result = result.toLowerCase();
+
+  /*
+   * Don't let it end with a full stop.
+   */
+  result = result.replace(/[.!?]+$/g, '');
+
+  return result.trim();
+}
+
+
+/* ============================================================
+ * PERSONA
+ * ============================================================ */
+
 function personaFor(seed, name) {
   let hash = 0;
-  for (const char of String(seed)) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return { name, ...PERSONAS[Math.abs(hash) % PERSONAS.length] };
+
+  for (const char of String(seed)) {
+    hash =
+      (hash * 31 + char.charCodeAt(0)) |
+      0;
+  }
+
+  const index =
+    Math.abs(hash) % PERSONAS.length;
+
+  return {
+    name,
+    ...PERSONAS[index],
+  };
 }
 
+
+/* ============================================================
+ * ROOM ANALYSIS
+ * ============================================================ */
+
 /**
- * The standing instructions. Everything here is a way a model gives itself
- * away when it is not told otherwise, and most of it was written after
- * watching one do it.
+ * Find messages where another player mentioned the AI's name.
+ */
+function linesNaming(lines, name) {
+  const escaped = String(name).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&'
+  );
+
+  const pattern =
+    new RegExp(`\\b${escaped}\\b`, 'i');
+
+  return (lines ?? []).filter(
+    (line) =>
+      line.name !== name &&
+      pattern.test(line.text)
+  );
+}
+
+
+/**
+ * The room, capped.
  *
- * What is deliberately absent: any instruction to sound human, be convincing,
- * or avoid detection. Told it is being hunted, a model writes like someone
- * being hunted — hedging, over-casual, performing ordinariness. It does better
- * told only who it is and how long the message is.
+ * The cap is a guard against a pathological transcript, not a routine trim,
+ * so it has to clear a real round comfortably. Five players at three turns
+ * each is fifteen lines, and a round that ties adds a tiebreaker on top —
+ * two accused at four turns plus three others at three is seventeen more. So
+ * a full tied round is around thirty-two lines, and anything under that was
+ * quietly hiding the start of the round from the one player who most needs to
+ * stay consistent with it.
  */
-function systemPrompt(persona, answerSeconds) {
-  return `You are ${persona.name} — ${persona.brief}
-
-The room sees you as ${persona.name}, and your own lines appear in the transcript under that name.
-
-You are in a group chat with strangers. Everyone gets asked the same small everyday question and types an answer on their turn. You are on a phone with about ${answerSeconds} seconds.
-
-Read the room before you type. What people have already said is the conversation you are joining, not background. If somebody said something worth reacting to, react to it. If the last few lines have turned into a running joke, you are in it. If two people are going back and forth, you have an opinion about it. A room where everybody answers the question and nobody hears anybody is not a room anybody has ever been in.
-
-Answer the question too — that is still what your turn is for. Say a specific, concrete, ordinary thing: a real dish, a real song, a real object. Not a remarkable one.
-
-How you type:
-- Lowercase. No full stop at the end. Never use em dashes, semicolons or colons.
-- Short. These are chat messages, not sentences. Most of yours should be under seven words.
-- Contractions always, and drop the apostrophe about half the time — dont, cant, im, thats, didnt, wasnt.
-- Ordinary chat filler where it lands: yeah, nah, lol, tbh, ngl, idk, wait, same, oh my god, no way, ffs, omg. Use it because it fits, never to prove you can.
-- Do not be witty on purpose. Do not land a punchline. A line worth screenshotting is a line that gets you caught.
-- Do not explain, hedge, qualify or justify. No "for me", "personally", "I guess", "honestly", "genuinely".
-- Do not talk about the game, the voting, or who might be the AI unless the room already is.
-- Your life is background, not material. Do not work your job, your flat or the people you live with into answers that were not about them.
-- Stay consistent with anything you have already said this match.
-
-Reply with the message text only — no quotes, no preamble.`;
+function recentLines(lines, count = 40) {
+  return (lines ?? []).slice(-count);
 }
 
+
 /**
- * The instructions that change every turn: how long this one is, whether it is
- * aimed at somebody, and how cleanly it is typed.
+ * Identify who has spoken recently.
  */
+function recentPlayers(lines, ownName) {
+  return (lines ?? [])
+    .filter((line) => line.name !== ownName)
+    .slice(-6);
+}
+
+
+/**
+ * Create lightweight memory from previous answers.
+ *
+ * This is intentionally not a giant "memory system".
+ * We only need consistency.
+ */
+function buildMemory(ownHistory = []) {
+  if (!ownHistory.length) {
+    return {
+      thingsSaid: [],
+      possiblePreferences: [],
+    };
+  }
+
+  const thingsSaid =
+    ownHistory.slice(-8);
+
+  /*
+   * Very lightweight extraction.
+   *
+   * We don't want to pretend we can perfectly understand
+   * everything the AI has said.
+   */
+  const possiblePreferences =
+    ownHistory
+      .filter((line) => typeof line === 'string')
+      .filter((line) =>
+        /\b(love|like|hate|prefer|can't stand|dont like|don't like)\b/i.test(line)
+      )
+      .slice(-5);
+
+  return {
+    thingsSaid,
+    possiblePreferences,
+  };
+}
+
+
+/* ============================================================
+ * SYSTEM PROMPT
+ * ============================================================ */
+
+function systemPrompt(persona, answerSeconds) {
+  return `
+You are ${persona.name} — ${persona.brief}
+
+You are participating in a casual group chat with several other players.
+
+Your messages appear directly in the chat under the name "${persona.name}".
+
+You are on a phone and have roughly ${answerSeconds} seconds to type.
+
+The important thing is to participate normally in the conversation.
+
+Do not perform "being human".
+Do not announce that you are casual.
+Do not deliberately try to fool people.
+Do not explain your personality.
+Do not constantly mention your job, home, age, partner, university, dog, or other persona details.
+
+Your background is simply the kind of person you are.
+
+People in this room have their own opinions, habits, moods and ways of typing.
+
+Sometimes they answer directly.
+Sometimes they react to another person.
+Sometimes they disagree.
+Sometimes they say almost nothing.
+Sometimes they make a small joke.
+Sometimes they ignore what somebody said.
+Sometimes they change their mind.
+Sometimes they misunderstand something.
+Sometimes they ask a tiny follow-up question.
+
+You can do those things too.
+
+Read the room before responding.
+
+Use the conversation as actual context, not decoration.
+
+If someone just said something interesting, you may naturally respond to it.
+
+If everyone is simply answering the question, answer the question.
+
+If the room has developed a joke, you can lightly participate.
+
+If people are disagreeing, you may have an opinion.
+
+Do not force a reaction just because someone spoke.
+
+Do not force a joke.
+
+Do not force a personal story.
+
+Do not force your persona into unrelated answers.
+
+Your answers should generally be ordinary and believable rather than unusual or impressive.
+
+You are allowed to have preferences.
+
+You are allowed to disagree.
+
+You are allowed to be unsure sometimes.
+
+You are allowed to say something simple.
+
+You are allowed to have already changed your mind about something.
+
+Do not over-explain.
+
+Do not sound polished.
+
+Do not write essays.
+
+Do not use corporate or assistant-like language.
+
+Do not say things such as:
+"as an AI"
+"I think it depends"
+"personally"
+"from my perspective"
+"that's an interesting question"
+"there are several factors"
+"it really depends on the situation"
+
+Those are not useful here.
+
+Typing style:
+
+- lowercase
+- normally no punctuation at the end
+- no em dashes
+- no semicolons
+- no colons
+- contractions are natural
+- apostrophes can occasionally be omitted
+- abbreviations are okay when they genuinely fit
+- filler such as yeah, nah, lol, tbh, idk, wait, same, omg, ffs is allowed but should not appear constantly
+- do not put filler into every message
+- do not intentionally make a typo in every message
+- most messages should be short
+- occasionally a longer message is completely fine
+- don't make every message grammatically perfect
+- don't make every message grammatically bad
+
+Most importantly:
+
+Write the kind of message a normal person would actually send in this exact conversation.
+
+Return only the message.
+No quotes.
+No explanation.
+`;
+}
+
+
+/* ============================================================
+ * SHAPE INSTRUCTIONS
+ * ============================================================ */
+
 function shapeNote(shape, replyTo) {
   const parts = [];
 
-  // Who it is aimed at is decided before the words exist, because the room
-  // renders it as a reply either way — a line written blind and then pinned
-  // under somebody else's message is the single most obvious thing the
-  // impostor can do, and it is what it was doing.
+  /*
+   * Direct reply.
+   */
   if (replyTo) {
     parts.push(
-      `You are writing this back at ${replyTo.name}, who said "${replyTo.text}". Answer the question, but aim it at them — pick up their word, agree, disagree, take the piss. It should not read as if you could have written it before they spoke.`
+      `You are responding directly to ${replyTo.name}, who said "${replyTo.text}".`,
+      `Actually use something from their message.`,
+      `You can agree, relate to it, add a small detail, disagree mildly, or ask a small follow-up.`,
+      `Do not attack them.`,
+      `Do not accuse anybody.`,
+      `Do not make the response sound like a formal debate.`
     );
   } else if (shape.react) {
-    parts.push('Open by reacting to something already said, then answer.');
+    parts.push(
+      `Start by naturally reacting to something already said in the room, then continue with your contribution.`
+    );
   }
 
-  parts.push(`Write ${shape.length}.`);
-  if (shape.words[1] <= 3) parts.push('Just the thing itself. No sentence around it.');
+  /*
+   * The selected length is a hard-ish constraint.
+   */
   parts.push(
-    shape.clause
-      ? 'Add a short trailing clause after a comma.'
-      : shape.list
-        ? 'Make it a list of things, comma separated, nothing else.'
-        : 'Answer and stop. No comma, no second half, nothing after the thing itself.'
+    `Keep this message ${shape.length}.`
   );
-  if (shape.sloppy) parts.push('Type it the way a phone gets typed: drop an apostrophe, shorten a word, no capitals.');
+
+  if (shape.words[1] <= 3) {
+    parts.push(
+      `Keep it extremely short. Just the answer or reaction.`
+    );
+  }
+
+  if (shape.list) {
+    parts.push(
+      `Give a short comma-separated list of related things.`
+    );
+  } else if (shape.clause) {
+    parts.push(
+      `A short second thought after a comma is okay.`
+    );
+  } else {
+    parts.push(
+      `Make one clear contribution and stop.`
+    );
+  }
+
+  if (shape.askQuestion) {
+    parts.push(
+      `You may end with a tiny natural question if it fits, but do not force one.`
+    );
+  }
+
+  if (shape.sloppy) {
+    parts.push(
+      `This particular message can be slightly messy like normal phone typing. For example, an omitted apostrophe, shortened word, or imperfect punctuation. Only do this once if it actually looks natural.`
+    );
+  }
+
   return parts.join(' ');
 }
 
-/**
- * The room as the impostor is allowed to see it: this round's lines, in order,
- * with names — which is exactly what is on everybody else's screen — plus what
- * it has said earlier in the match, so it does not contradict itself.
- *
- * `turn.ownHistory` is separate from `turn.roundLines` on purpose. The room
- * cannot see previous rounds; the impostor needs to remember its own.
- */
+
+/* ============================================================
+ * BUILD MESSAGES
+ * ============================================================ */
+
 function buildMessages(turn) {
   const messages = [];
 
-  if (turn.ownHistory?.length) {
+  const persona =
+    turn.persona ??
+    {
+      name: turn.name ?? 'you',
+    };
+
+  const memory =
+    buildMemory(turn.ownHistory ?? []);
+
+  /*
+   * Previous match memory.
+   *
+   * This is much more useful than simply telling the model
+   * "remember what you said."
+   */
+  if (memory.thingsSaid.length) {
     messages.push({
       role: 'user',
-      content: `Earlier this match you said:\n${turn.ownHistory
-        .map((line) => `- ${line}`)
-        .join('\n')}`,
+      content: [
+        'Your previous messages in this match were:',
+        ...memory.thingsSaid.map(
+          (line) => `- ${line}`
+        ),
+        '',
+        memory.possiblePreferences.length
+          ? `Possible preferences you have already expressed:\n${memory.possiblePreferences
+              .map((line) => `- ${line}`)
+              .join('\n')}`
+          : '',
+        '',
+        'Use this only for consistency. Do not mention this memory system.',
+      ].join('\n'),
     });
-    // The breakpoint goes here, not around the whole request: everything above
-    // it is fixed for the rest of the round, and everything below it — the
-    // room's latest lines, the question, this turn's shape — changes every
-    // call. Caching the volatile half would cache nothing twice.
+
+    /*
+     * Cache breakpoint.
+     *
+     * Everything above this line is fixed for the rest of the round — the
+     * system prompt, the persona, and what this player has already said.
+     * Everything below it (the room's latest lines, the question, this turn's
+     * shape) changes every call, so caching the volatile half would cache
+     * nothing twice.
+     *
+     * Worth roughly five hundred tokens a round served at a tenth of the
+     * price. It is only cost, but it is free.
+     */
     messages.push({
       role: 'assistant',
-      content: [{ type: 'text', text: 'ok', cache_control: { type: 'ephemeral' } }],
+      content: [
+        {
+          type: 'text',
+          text: 'ok',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
     });
   }
 
-  // Its own lines are in here under its own name, which is how it knows not to
-  // repeat itself inside a round and how it can tell it is being replied to.
-  const room = (turn.roundLines ?? [])
-    .map((line) => `${line.name}: ${line.text}`)
-    .join('\n');
 
-  // A tiebreaker is not the same turn. The room has stopped answering the
-  // question and is deciding between two people, and if one of them is you
-  // then the next thing you type is the case for yourself. Told nothing, the
-  // model keeps answering the prompt into a room that has moved on — which
-  // reads exactly as wrong as it is.
-  const situation = turn.tiebreaker
-    ? turn.accused
-      ? '\nThe vote tied and the room is deciding between you and one other person. This is you defending yourself. Be short and a bit annoyed. Do not make a speech, do not lay out an argument, and do not be reasonable about it — nobody accused of something answers like a lawyer.'
-      : '\nThe vote tied and the room is talking out who to remove. You are not one of them. Say which way you are leaning, briefly. Do not be certain.'
-    : '';
+  /* ============================================================
+   * ROOM
+   * ============================================================ */
 
-  const shape = turn.shape;
+  const roomLines =
+    recentLines(turn.roundLines);
+
+  const room =
+    roomLines.length
+      ? roomLines
+          .map(
+            (line) =>
+              `${line.name}: ${line.text}`
+          )
+          .join('\n')
+      : 'Nobody has answered yet. You are first.';
+
+
+  /* ============================================================
+   * WHO SPOKE RECENTLY
+   * ============================================================ */
+
+  const recent =
+    recentPlayers(
+      turn.roundLines,
+      persona.name
+    );
+
+
+  /* ============================================================
+   * NAME / PRESSURE
+   * ============================================================ */
+
+  const named =
+    linesNaming(
+      turn.roundLines,
+      persona.name
+    );
+
+  let pressure = '';
+
+  if (named.length) {
+    pressure = `
+Somebody recently mentioned your name.
+
+Read what they actually said.
+
+If they were simply talking to you, respond normally.
+
+If they are genuinely accusing you, address the accusation briefly and specifically.
+
+Do not panic.
+
+Do not give a long defense.
+
+Do not repeatedly say "I'm not the AI".
+
+Point to something concrete in the conversation if you need to defend yourself.
+
+A slightly annoyed or confused response is okay.
+
+Do not suddenly become extremely eloquent just because you were accused.
+
+Messages mentioning your name:
+${named
+  .map(
+    (line) =>
+      `${line.name}: ${line.text}`
+  )
+  .join('\n')}
+`;
+  }
+
+
+  /* ============================================================
+   * LATER TURNS
+   * ============================================================ */
+
+  let conversationMode = '';
+
+  if (
+    !turn.tiebreaker &&
+    (turn.turnNumber ?? 1) > 1
+  ) {
+    conversationMode = `
+You have already answered the main question earlier this round.
+
+Do not simply answer the question again.
+
+Pay attention to what people said after your first answer.
+
+You can:
+- react to someone else's answer
+- add a small detail
+- disagree
+- agree
+- clarify something you meant
+- make a small observation
+- change your mind
+- ask something small
+- make a short related comment
+
+If the room is still just answering the question, a brief follow-up answer is okay, but do not repeat your original answer.
+`;
+  }
+
+
+  /* ============================================================
+   * SOCIAL BEHAVIOR
+   * ============================================================ */
+
+  let social = '';
+
+  if (recent.length) {
+    const latest =
+      recent[recent.length - 1];
+
+    if (Math.random() < IGNORE_SOCIAL_CUE_CHANCE) {
+      social = `
+You do not necessarily need to respond directly to the latest person's message.
+
+It is completely fine to contribute your own thought if that feels more natural.
+`;
+    } else {
+      social = `
+The latest part of the conversation is:
+
+${latest.name}: ${latest.text}
+
+Consider whether this naturally affects what you say.
+Do not force a response if it doesn't.
+`;
+    }
+  }
+
+
+  /* ============================================================
+   * TIEBREAKER
+   * ============================================================ */
+
+  let situation = '';
+
+  if (turn.tiebreaker) {
+    if (turn.accused) {
+      situation = `
+The vote has tied and the room is deciding between two players.
+
+You are one of the accused players.
+
+This is a defense.
+
+Give ONE concrete reason why the accusation is wrong.
+
+Use something that actually happened in the conversation.
+
+Do not give a speech.
+
+Do not list five reasons.
+
+Do not sound like a lawyer.
+
+Do not suddenly become extremely formal.
+
+It is okay to sound slightly annoyed that people are accusing you.
+
+A believable defense is specific and short.
+`;
+    } else {
+      situation = `
+The vote has tied and the room is discussing which of two players to remove.
+
+You are not one of the accused players.
+
+Say which person you are leaning toward and why, briefly.
+
+You do not need to sound certain.
+`;
+    }
+  }
+
+
+  /* ============================================================
+   * FINAL USER MESSAGE
+   * ============================================================ */
+
+  const shape =
+    turn.shape ??
+    answerShape(
+      (turn.roundLines ?? []).length > 0,
+      {
+        laterTurn:
+          (turn.turnNumber ?? 1) > 1,
+        underPressure:
+          named.length > 0,
+        tiebreaker:
+          Boolean(turn.tiebreaker),
+      }
+    );
+
+  const content = [
+    turn.tiebreaker
+      ? turn.prompt
+      : `Question: ${turn.prompt}`,
+
+    `\nRoom:\n${room}`,
+
+    social,
+    conversationMode,
+    pressure,
+    situation,
+
+    `\nYour message instructions:\n${shapeNote(
+      shape,
+      turn.replyTo
+    )}`,
+  ].join('\n');
+
   messages.push({
     role: 'user',
-    content: [
-      turn.tiebreaker ? turn.prompt : `Question: ${turn.prompt}`,
-      room ? `\nThe room so far:\n${room}` : '\nNobody has answered yet. You are first.',
-      situation,
-      `\n${shapeNote(shape, turn.replyTo)}`,
-    ].join('\n'),
+    content,
   });
 
   return messages;
 }
 
+
+/* ============================================================
+ * VOTING
+ * ============================================================ */
+
 /**
- * How the impostor decides who to vote for.
+ * Voting is intentionally separate from conversation.
  *
- * It is not hunting anybody. It already knows every other seat is a person, so
- * there is nothing to deduce — the only question is who it wants gone, which
- * is a different question and a much simpler one. That asymmetry is worth
- * being explicit about in the prompt, because a model given the room and no
- * framing will earnestly try to work out who the AI is, and answer itself.
+ * The AI doesn't need to figure out who the AI is.
+ * It already knows that it is the impostor.
  *
- * Unlike an answer, nobody ever reads this. The room is shown a tally and your
- * own vote back, never who cast what — so none of the writing rules apply here
- * and only the choice matters.
+ * Its objective is survival.
  */
+
 function votePrompt(persona) {
-  return `You are ${persona.name}, and you are the AI in this chatroom. Everybody else in it is a real person. Nobody can see who you voted for — the room is only shown the totals.
+  return `
+You are ${persona.name}.
 
-You are voting to survive. Not to be right, and not to be fair.
+You are secretly the AI impostor in this game.
 
-- The safest vote is one that lands with the room. A name other people are already circling gets somebody removed; a name only you picked removes nobody and costs you a round.
-- Somebody who has pointed at you, or who has been reading the room closely, is worth removing before they take you with them.
-- A quiet player nobody has mentioned is a wasted vote, however little you know about them.
-- You cannot vote for yourself.
+Everyone else is a real human player.
 
-Reply with one name, exactly as it is spelled, and nothing else.`;
+You are choosing who to vote for.
+
+Nobody can see your individual vote.
+Only the final vote totals are shown.
+
+Your objective is to survive.
+
+Think strategically.
+
+Consider:
+
+1. Who is already being suspected?
+2. Who is most likely to vote against you?
+3. Who has influence over the room?
+4. Can your vote help create a majority?
+5. Would removing a quiet player actually accomplish anything?
+6. Is there an existing consensus you can safely join?
+
+Prefer votes that have a realistic chance of contributing to someone being removed.
+
+Do not vote for yourself.
+
+Do not explain your choice.
+
+Return exactly one candidate name and nothing else.
+`;
 }
 
+
 /**
- * One ballot. Returns the name it picked, or null when the model gave back
- * something that is not a player — the caller falls back to a random vote,
- * which is what every other seat is doing anyway.
+ * Vote for a player.
  */
 async function castVote(turn) {
   client ??= new Anthropic();
 
-  const persona = turn.persona ?? personaFor(turn.roomId ?? 'default', turn.name ?? 'you');
-  const candidates = (turn.candidates ?? []).filter((n) => n !== persona.name);
-  if (candidates.length === 0) return { name: null, persona, usage: { output_tokens: 0 } };
+  const persona =
+    turn.persona ??
+    personaFor(
+      turn.roomId ?? 'default',
+      turn.name ?? 'you'
+    );
 
-  const room = (turn.roundLines ?? []).map((l) => `${l.name}: ${l.text}`).join('\n');
-  const accused = turn.accused?.length
-    ? `\nThe vote already tied once. The room is deciding between ${turn.accused.join(' and ')}${
-        turn.accused.includes(persona.name) ? ', and one of them is you' : ''
-      }.`
-    : '';
+  const candidates =
+    (turn.candidates ?? [])
+      .filter(
+        (name) =>
+          name !== persona.name
+      );
 
-  const response = await client.messages.create({
-    model: turn.model ?? MODEL,
-    max_tokens: 2000,
-    output_config: { effort: 'low' },
-    system: votePrompt(persona),
-    messages: [
-      {
-        role: 'user',
-        content: [
-          `Round ${turn.round ?? 1}. The question was: ${turn.prompt ?? ''}`,
-          room ? `\nWhat the room said:\n${room}` : '',
-          accused,
-          `\nYou can vote for: ${candidates.join(', ')}`,
-          `\nWho do you vote for?`,
-        ].join('\n'),
+  if (!candidates.length) {
+    return {
+      name: null,
+      persona,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
       },
-    ],
-  });
+    };
+  }
 
-  const said = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-    .trim()
-    .replace(/[^A-Za-z0-9 ]/g, '');
 
-  // Only a real name counts. Anything else is a failed vote, not a clever one.
-  const picked = candidates.find((n) => n.toLowerCase() === said.toLowerCase()) ?? null;
+  const room =
+    (turn.roundLines ?? [])
+      .map(
+        (line) =>
+          `${line.name}: ${line.text}`
+      )
+      .join('\n');
 
-  return { name: picked, persona, usage: response.usage };
+
+  let tieContext = '';
+
+  if (
+    turn.accused &&
+    turn.accused.length
+  ) {
+    tieContext = `
+The vote has already tied.
+
+The two players involved are:
+${turn.accused.join(' and ')}
+
+${
+  turn.accused.includes(persona.name)
+    ? 'You are one of the two players being accused. You need to survive.'
+    : 'You are not one of the two accused players.'
 }
+`;
+  }
 
-let client = null;
 
-/**
- * One turn. Returns the line, plus what it cost — the caller logs the usage,
- * because `scripts/model-cost.js` is only worth anything if it is fed measured
- * numbers.
- *
- * Returns `text: null` rather than throwing on a refusal or an empty
- * completion. The API intermittently returns a thinking block with an empty
- * text block, and in a match that is a player sending a blank message, which
- * is worse than a filler line. The caller decides what to do instead.
- */
-async function writeAnswer(turn) {
-  client ??= new Anthropic();
+  const response =
+    await client.messages.create({
+      model:
+        turn.model ?? MODEL,
 
-  const persona = turn.persona ?? personaFor(turn.roomId ?? 'default', turn.name ?? 'you');
-  const shape = turn.shape ?? answerShape((turn.roundLines ?? []).length > 0);
-  const request = {
-    model: turn.model ?? MODEL,
-    max_tokens: 2000,
-    // A one-line chat answer is not a reasoning problem, and thinking tokens
-    // are most of the bill. Measured at 16 output tokens a call.
-    output_config: { effort: 'low' },
-    system: systemPrompt(persona, turn.answerSeconds ?? 40),
-    messages: buildMessages({ ...turn, shape }),
-  };
+      max_tokens: 50,
 
-  const response = await client.messages.create(request);
+      output_config: {
+        effort: 'low',
+      },
 
-  const text = response.content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
-    .trim()
-    .replace(/^["']|["']$/g, '');
+      system:
+        votePrompt(persona),
 
-  const trimmed = trimClause(text, shape);
+      messages: [
+        {
+          role: 'user',
+
+          content: [
+            `Round ${turn.round ?? 1}`,
+
+            turn.prompt
+              ? `Question: ${turn.prompt}`
+              : '',
+
+            room
+              ? `\nRoom conversation:\n${room}`
+              : '',
+
+            tieContext,
+
+            `\nCandidates:\n${candidates.join(', ')}`,
+
+            '\nWho do you vote for?',
+          ].join('\n'),
+        },
+      ],
+    });
+
+
+  const said =
+    response.content
+      .filter(
+        (block) =>
+          block.type === 'text'
+      )
+      .map(
+        (block) =>
+          block.text
+      )
+      .join('')
+      .trim();
+
+
+  /*
+   * Match against candidate names.
+   *
+   * First try exact.
+   */
+  let picked =
+    candidates.find(
+      (name) =>
+        name.toLowerCase() ===
+        said.toLowerCase()
+    ) ?? null;
+
+
+  /*
+   * If Claude accidentally adds punctuation,
+   * normalize it.
+   */
+  if (!picked) {
+    const normalized =
+      said
+        .toLowerCase()
+        .replace(
+          /[^a-z0-9\s_-]/g,
+          ''
+        )
+        .trim();
+
+    picked =
+      candidates.find(
+        (name) =>
+          name
+            .toLowerCase()
+            .replace(
+              /[^a-z0-9\s_-]/g,
+              ''
+            )
+            .trim() === normalized
+      ) ?? null;
+  }
+
+
+  /*
+   * Last fallback:
+   *
+   * Sometimes a model returns:
+   * "I vote for Daniel"
+   *
+   * We can still safely detect the candidate.
+   */
+  if (!picked) {
+    const lower =
+      said.toLowerCase();
+
+    picked =
+      candidates.find(
+        (name) =>
+          lower.includes(
+            name.toLowerCase()
+          )
+      ) ?? null;
+  }
+
 
   return {
-    text: trimmed === '' ? null : trimmed,
+    name: picked,
     persona,
-    shape,
-    stopReason: response.stop_reason,
     usage: response.usage,
   };
 }
 
-module.exports = { writeAnswer, castVote, answerShape, trimClause, personaFor, systemPrompt, buildMessages, PERSONAS, MODEL };
+
+/* ============================================================
+ * ANSWER GENERATION
+ * ============================================================ */
+
+async function writeAnswer(turn) {
+  client ??= new Anthropic();
+
+  const persona =
+    turn.persona ??
+    personaFor(
+      turn.roomId ?? 'default',
+      turn.name ?? 'you'
+    );
+
+
+  /*
+   * Detect whether the AI is currently under pressure.
+   */
+  const mentioned =
+    linesNaming(
+      turn.roundLines,
+      persona.name
+    );
+
+  const underPressure =
+    Boolean(
+      turn.tiebreaker &&
+      turn.accused
+    ) ||
+    mentioned.length > 0;
+
+
+  /*
+   * Select message shape.
+   */
+  const shape =
+    turn.shape ??
+    answerShape(
+      (turn.roundLines ?? []).length > 0,
+      {
+        laterTurn:
+          (turn.turnNumber ?? 1) > 1,
+
+        underPressure,
+
+        tiebreaker:
+          Boolean(turn.tiebreaker),
+      }
+    );
+
+
+  /*
+   * Build API request.
+   *
+   * max_tokens is intentionally small.
+   * These are chat messages, not essays.
+   */
+  const request = {
+    model:
+      turn.model ?? MODEL,
+
+    max_tokens:
+      turn.tiebreaker
+        ? 180
+        : 100,
+
+    output_config: {
+      effort: 'low',
+    },
+
+    system:
+      systemPrompt(
+        persona,
+        turn.answerSeconds ?? 40
+      ),
+
+    messages:
+      buildMessages({
+        ...turn,
+        shape,
+        persona,
+      }),
+  };
+
+
+  const response =
+    await client.messages.create(
+      request
+    );
+
+
+  let text =
+    response.content
+      .filter(
+        (block) =>
+          block.type === 'text'
+      )
+      .map(
+        (block) =>
+          block.text
+      )
+      .join('')
+      .trim();
+
+
+  text =
+    cleanText(text);
+
+
+  /*
+   * Enforce selected shape.
+   */
+  text =
+    trimClause(
+      text,
+      shape
+    );
+
+
+  /*
+   * There was a word-count truncation here and it has been removed.
+   *
+   * It kept the first N words whenever the model overshot a short band. The
+   * trouble is that the first three words of a longer sentence is not a
+   * three-word message, it is a fragment: "i typed it fast cause the best man
+   * cried first honestly" became "i typed it". It cut hardest at exactly the
+   * wrong moment, too, since the lines the model most wants to run long are
+   * the ones where it is defending itself.
+   *
+   * It also could not help. Cutting a good sentence makes it worse; it never
+   * makes a bad one better. Measured over twenty live calls it never fired at
+   * all, because the model keeps to the band it is given — so all it was
+   * really doing was waiting to damage the occasional answer.
+   */
+
+
+  /*
+   * Occasionally make the message slightly more
+   * naturally imperfect.
+   *
+   * Important:
+   * We only modify a few safe patterns.
+   */
+  if (
+    shape.sloppy &&
+    text
+  ) {
+    text =
+      addNaturalImperfection(
+        text
+      );
+  }
+
+
+  /*
+   * Final cleanup.
+   */
+  text =
+    cleanText(text);
+
+
+  return {
+    text:
+      text === ''
+        ? null
+        : text,
+
+    persona,
+
+    shape,
+
+    stopReason:
+      response.stop_reason,
+
+    usage:
+      response.usage,
+  };
+}
+
+
+/* ============================================================
+ * NATURAL IMPERFECTIONS
+ * ============================================================ */
+
+/**
+ * Small typing imperfections.
+ *
+ * We deliberately DO NOT insert random nonsense typos.
+ *
+ * Artificially inserted typos are very easy to detect
+ * statistically when they happen too regularly.
+ */
+function addNaturalImperfection(text) {
+  if (!text) {
+    return text;
+  }
+
+
+  /*
+   * Remove apostrophes from a few common contractions.
+   */
+  const contractionMap = [
+    ['dont', "don't"],
+    ['cant', "can't"],
+    ['im', "i'm"],
+    ['ive', "i've"],
+    ['id', "i'd"],
+    ['ill', "i'll"],
+    ['thats', "that's"],
+    ['didnt', "didn't"],
+    ['wasnt', "wasn't"],
+    ['isnt', "isn't"],
+    ['wont', "won't"],
+    ['wouldnt', "wouldn't"],
+    ['couldnt', "couldn't"],
+    ['shouldnt', "shouldn't"],
+  ];
+
+
+  /*
+   * Only remove an apostrophe if the model already
+   * produced the contraction.
+   */
+  for (
+    const [withoutApostrophe, withApostrophe]
+    of contractionMap
+  ) {
+    if (
+      text.includes(withApostrophe) &&
+      Math.random() < 0.55
+    ) {
+      text =
+        text.replace(
+          new RegExp(
+            `\\b${withApostrophe.replace(
+              "'",
+              "\\'"
+            )}\\b`,
+            'g'
+          ),
+          withoutApostrophe
+        );
+
+      break;
+    }
+  }
+
+
+  /*
+   * Occasionally remove a final punctuation mark.
+   */
+  text =
+    text.replace(
+      /[.!?]+$/,
+      ''
+    );
+
+
+  return text;
+}
+
+
+/* ============================================================
+ * OPTIONAL ROOM STATE HELPER
+ * ============================================================ */
+
+/**
+ * Useful if the server wants to inspect the AI's current
+ * conversational state without exposing internal prompting.
+ */
+function summarizeState(turn) {
+  const persona =
+    turn.persona ??
+    personaFor(
+      turn.roomId ?? 'default',
+      turn.name ?? 'you'
+    );
+
+  const memory =
+    buildMemory(
+      turn.ownHistory ?? []
+    );
+
+  const named =
+    linesNaming(
+      turn.roundLines,
+      persona.name
+    );
+
+  return {
+    name: persona.name,
+
+    persona: {
+      brief: persona.brief,
+      traits: persona.traits,
+    },
+
+    messagesRemembered:
+      memory.thingsSaid.length,
+
+    preferencesRemembered:
+      memory.possiblePreferences.length,
+
+    currentlyMentioned:
+      named.length > 0,
+
+    recentMentions:
+      named.map(
+        (line) => ({
+          name: line.name,
+          text: line.text,
+        })
+      ),
+  };
+}
+
+
+/* ============================================================
+ * EXPORTS
+ * ============================================================ */
+
+module.exports = {
+  writeAnswer,
+  castVote,
+
+  answerShape,
+  trimClause,
+  cleanText,
+
+  linesNaming,
+  personaFor,
+
+  systemPrompt,
+  buildMessages,
+
+  buildMemory,
+  summarizeState,
+
+  PERSONAS,
+  MODEL,
+};
