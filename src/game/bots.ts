@@ -14,11 +14,28 @@
 
 import { useEffect, useRef } from 'react';
 
-import { answerDelay, missesTurn, pickReplyTarget, voteDelay } from './humanlike';
+import {
+  answerDelay,
+  answerDelayWithin,
+  missesTurn,
+  pickReplyTarget,
+  voteDelay,
+} from './humanlike';
 import { impostorEnabled, requestImpostorAnswer, requestImpostorVote } from './impostor';
 import { mockAnswer } from './mock';
 import { TEST_MODE } from './testing';
 import { currentTurnId, roundAnswers, survivors, type Answer, type Room } from './types';
+
+/**
+ * How much of a turn is held back for actually sending the impostor's line.
+ *
+ * The model used to be given the whole window as its deadline, which cannot
+ * work: a call that takes all forty seconds leaves nothing to put the words
+ * in, and the stock line that covers for it has nowhere to go either. So the
+ * request is cut short of the clock, and whatever comes back — the model's
+ * line or the fallback — still has a moment to land inside the turn.
+ */
+const SEND_MARGIN_MS = 1_500;
 
 export function useBotTurns(
   room: Room | null,
@@ -55,7 +72,10 @@ export function useBotTurns(
     // was pinned under a message it had never been shown — the room rendered a
     // reply that answered nothing. Everyone else gets the same fix for free:
     // a stock line is no more of a reply than the model's was.
-    const replyToId = pickReplyTarget(answersRef.current);
+    // Whose turn it is, not whose device this is: everybody replies from
+    // their own seat, and the seat is what decides whether the last message
+    // was aimed at them.
+    const replyToId = pickReplyTarget(answersRef.current, turnId);
 
     /**
      * How long they take depends on how much they wrote, so nothing can be
@@ -65,13 +85,15 @@ export function useBotTurns(
      * happens to be slow eats its own thinking time rather than pushing the
      * whole room later.
      */
-    const scheduleSend = (text: string) => {
-      const delay = answerDelay(text, windowMs);
+    const scheduleSend = (text: string, canMiss = true) => {
+      const delay = canMiss
+        ? answerDelay(text, windowMs)
+        : answerDelayWithin(text, windowMs);
 
       // Somebody who runs past their clock simply never sends. The room's own
       // turn expiry picks it up and they are shown as having run out of time,
       // exactly as if a person had put their phone down mid-sentence.
-      if (missesTurn(delay, windowMs)) return;
+      if (canMiss && missesTurn(delay, windowMs)) return;
 
       timer = setTimeout(
         () => answerRef.current(text, false, replyToId),
@@ -89,16 +111,22 @@ export function useBotTurns(
       const opened = roomRef.current;
       if (!opened) return;
 
-      // The clock is already running while this is in flight, which is why it
-      // is given the turn as its deadline: a line that lands after the turn
+      // The clock is already running while this is in flight, which is why the
+      // deadline is the turn less the margin: a line that lands after the turn
       // has gone is not late, it is nothing.
-      requestImpostorAnswer(opened, windowMs, replyToId).then((text) => {
+      const deadline = Math.max(1_000, windowMs - SEND_MARGIN_MS);
+
+      requestImpostorAnswer(opened, deadline, replyToId).then((text) => {
         if (cancelled) return;
         // Null covers every failure — proxy down, model refused, empty
         // completion, too slow. A stock line is a worse impostor than a model
         // and a far better one than a blank message, and the room must never
         // be able to tell that the server fell over.
-        scheduleSend(text ?? mockAnswer());
+        //
+        // Under test it is also the only player answering itself, so it does
+        // not get to draw a turn it sits out: the clock is on to see whether
+        // the model comes back in time, not to watch it roll a miss.
+        scheduleSend(text ?? mockAnswer(), !TEST_MODE);
       });
     }
 

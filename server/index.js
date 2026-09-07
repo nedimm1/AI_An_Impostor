@@ -130,10 +130,22 @@ const server = http.createServer(async (req, res) => {
     totals.output += result.usage.output_tokens ?? 0;
 
     const took = Date.now() - started;
+
+    // What it was drawn to do, next to what it wrote. Watching one without
+    // the other tells you a line was off but never why.
+    const drawn = [
+      result.shape?.pushback ? `pushback=${result.shape.pushback}` : null,
+      result.shape?.stance ? `stance=${result.shape.stance}` : null,
+      result.shape?.nameUse ? `names=${result.shape.nameUse}` : null,
+      result.shape?.renamed ? 'ASKED AGAIN' : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
     console.log(
       `  ${String(took).padStart(5)}ms  ${result.persona.name.padEnd(6)} ${
         result.text === null ? '(empty)' : result.text
-      }`
+      }${drawn ? `\n          ${drawn}` : ''}`
     );
 
     // The shape goes back with the line purely so the app can log it. Nothing

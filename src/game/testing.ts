@@ -9,6 +9,16 @@
  * yourself puts real answers around it, and then what the impostor writes can
  * be judged against something worth judging it against.
  *
+ * The clock is not one of the things it changes. It was, briefly, on the
+ * grounds that six seats at forty seconds is a typing exercise rather than a
+ * test — but the impostor is being read against a deadline it was told about
+ * ("you have roughly 40 seconds to type"), and a harness that quietly removes
+ * that deadline is not reading the player the room will meet. So every turn is
+ * timed here exactly as it is in a match, yours and the seats you are typing
+ * included, with one exception: the impostor is not allowed to draw a turn it
+ * sits out. Missing turns is human and stays in the game; a missed turn here
+ * is just a turn of evidence thrown away.
+ *
  * It is a testing harness, not a game mode, and everything it changes is
  * changed in one of the four places that check `TEST_MODE`. Off, the game is
  * byte for byte what it was.

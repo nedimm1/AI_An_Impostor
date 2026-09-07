@@ -18,6 +18,7 @@ import { useResumeSignal } from '@/hooks/use-app-state';
 import { useBotTurns, useStrangerVotes } from './bots';
 import { useDropouts } from './dropouts';
 import { useMatchmaking, type Match } from './matchmaking';
+import { useRoundLog } from './round-log';
 import type { Profile } from './profile';
 import { roomReducer, type MatchAction } from './reducer';
 import { TEST_MODE } from './testing';
@@ -98,16 +99,22 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
   useStrangerVotes(room, castVote);
   useDropouts(room, playerLeft);
 
+  // Prints the round as it happens, in development only. Reads the room and
+  // changes nothing about it.
+  useRoundLog(room);
+
   // --- The room's clocks ------------------------------------------------
-  // A turn that expires still costs the turn. The screen submits your own
-  // draft on your clock; this is what happens to anyone it did not hear from,
-  // you included.
+  // A turn that expires still costs the turn. The screen submits whatever is
+  // in the box on its own clock, a moment before this one; this is what
+  // happens to any seat it did not hear from, yours and the ones you are
+  // typing alike.
   //
-  // Nothing expires while you are typing the room's answers yourself. Six
-  // seats at forty seconds is not a test, it is a typing exercise, and the
-  // clock is not what is being tested.
-  const turnEndsAt =
-    room?.phase === 'answering' && !TEST_MODE ? room.turnEndsAt : null;
+  // The clock used to be off under test, on the grounds that six seats at
+  // forty seconds is a typing exercise rather than a test. It is back on
+  // because the impostor's turn is timed too, and a harness that reads what
+  // the model writes while quietly removing the deadline it wrote against is
+  // not reading the same player the room will meet.
+  const turnEndsAt = room?.phase === 'answering' ? room.turnEndsAt : null;
   useEffect(() => {
     if (turnEndsAt === null) return;
     const timer = setTimeout(

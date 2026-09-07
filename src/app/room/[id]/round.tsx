@@ -101,19 +101,30 @@ export default function RoundScreen() {
   // to the room as it stands, half a sentence and all — only a box you never
   // wrote in passes the turn empty.
   //
-  // Only your own turn is sent from here: the room enforces everybody's clock,
-  // including yours, a moment later. This is the app getting your draft in
-  // before it does.
+  // The room enforces everybody's clock, including yours, a moment later. This
+  // is the app getting the draft in before it does — for your own turn, and
+  // under test for the seat you are currently typing, which has a clock of its
+  // own and would otherwise lose what you had written to it.
   const onTimeUp = useCallback(() => {
-    if (phase !== 'answering' || !yourTurn || out) return;
-    const draft = composerRef.current?.takeDraft() ?? '';
-    send({ type: 'answer', text: draft, timedOut: draft.trim().length === 0, replyToId });
-    setReplyToId(null);
-  }, [phase, yourTurn, out, send, replyToId]);
+    if (phase !== 'answering' || out) return;
+    if (!yourTurn && !typingForStranger) return;
 
-  // No clock under test — the room is waiting on how fast you can type six
-  // people, and `local-transport` has stopped enforcing the deadline anyway.
-  const remaining = useCountdown(TEST_MODE ? null : (room?.turnEndsAt ?? null), onTimeUp);
+    const draft = composerRef.current?.takeDraft() ?? '';
+
+    if (typingForStranger && speakerId) {
+      // An empty box is nothing to send on somebody else's behalf. The room's
+      // own expiry is right behind this and times the seat out, exactly as it
+      // would for a person who never typed.
+      if (draft.trim().length > 0) {
+        send({ type: 'answerAs', playerId: speakerId, text: draft, replyToId });
+      }
+    } else {
+      send({ type: 'answer', text: draft, timedOut: draft.trim().length === 0, replyToId });
+    }
+    setReplyToId(null);
+  }, [phase, yourTurn, typingForStranger, speakerId, out, send, replyToId]);
+
+  const remaining = useCountdown(room?.turnEndsAt ?? null, onTimeUp);
 
   // Whatever you had picked goes in as it stands. Closing the ballot is the
   // room's to do, not this screen's — it does that on its own clock, a moment

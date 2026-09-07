@@ -14,6 +14,7 @@
  * reason the transport seam exists.
  */
 
+import { noteImpostorShape } from './round-log';
 import {
   answerById,
   currentTurnNumber,
@@ -47,7 +48,7 @@ export type ImpostorTurn = {
   prompt: string;
   answerSeconds: number;
   /** This round's lines, in order — the same thing on everybody's screen. */
-  roundLines: { name: string; text: string }[];
+  roundLines: { name: string; text: string; replyToName: string | null }[];
   /** What it said in earlier rounds, which only it can still see. */
   ownHistory: string[];
   /**
@@ -61,6 +62,25 @@ export type ImpostorTurn = {
    */
   turnNumber: number;
   turnsEach: number;
+  /**
+   * Whether anybody has written back at it, and who at whom generally.
+   *
+   * The transcript used to be flattened to name and text, which threw away
+   * the one piece of structure the room can see and the impostor could not:
+   * that a line was aimed at somebody. Being replied to and not noticing is
+   * the most human-looking mistake there is to make and the least human thing
+   * to do, since on a phone the reply is drawn under your own message with
+   * your words quoted inside it. It is not subtle and nobody misses it.
+   */
+  /**
+   * Everybody still in the room, itself included.
+   *
+   * Sent because the transcript is not a roster: a player who walked out or
+   * was voted out an hour ago is still all over it, and the impostor turned
+   * on one of them twice in a round they had already left. Somebody who has
+   * gone cannot answer, cannot be voted for, and cannot take any heat off it.
+   */
+  stillIn: string[];
   /** The room is talking out a tied vote rather than answering a prompt. */
   tiebreaker: boolean;
   /** It is one of the two the room is deciding between. */
@@ -101,14 +121,22 @@ export function impostorTurn(room: Room, replyToId: string | null = null): Impos
     answerSeconds: room.settings.answerSeconds,
     turnNumber: currentTurnNumber(room),
     turnsEach: room.settings.turnsEach,
+    stillIn: survivors(room).map((p) => p.name),
     tiebreaker: room.tiebreaker !== null,
     accused: room.tiebreaker?.includes(room.impostorId ?? '') ?? false,
     replyTo:
       target && targetAuthor ? { name: targetAuthor.name, text: target.text } : null,
-    roundLines: spoken.map((answer) => ({
-      name: room.players.find((p) => p.id === answer.playerId)?.name ?? 'someone',
-      text: answer.text,
-    })),
+    roundLines: spoken.map((answer) => {
+      // Who the line was written at, when it was written at anybody. The room
+      // renders this as a quote above the message; the impostor gets the same
+      // fact as a name, which is all it needs to notice one aimed at itself.
+      const at = playerById(room, answerById(room, answer.replyToId)?.playerId);
+      return {
+        name: playerById(room, answer.playerId)?.name ?? 'someone',
+        text: answer.text,
+        replyToName: at?.name ?? null,
+      };
+    }),
     ownHistory: room.transcript
       .filter(
         (a) =>
@@ -239,8 +267,18 @@ export async function requestImpostorAnswer(
     });
     if (!response.ok) return null;
 
-    const body = (await response.json()) as { text?: string | null };
+    const body = (await response.json()) as {
+      text?: string | null;
+      shape?: Record<string, unknown> | null;
+    };
+
+    // Kept for the round log to print beside the line, and for nothing else.
+    // What the impostor was drawn to do is the half of its turn that does not
+    // show up on screen, and it is the half worth reading afterwards.
     const text = typeof body.text === 'string' ? body.text.trim() : '';
+
+    noteImpostorShape(body.shape ?? null, text);
+
     return text === '' ? null : text;
   } catch {
     // Includes the abort. Nothing here is worth distinguishing.

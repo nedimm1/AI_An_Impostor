@@ -4,7 +4,13 @@
  * a test that fails on a Tuesday for no reason.
  */
 
-import { answerDelay, missesTurn, pickReplyTarget, voteDelay } from './humanlike';
+import {
+  answerDelay,
+  answerDelayWithin,
+  missesTurn,
+  pickReplyTarget,
+  voteDelay,
+} from './humanlike';
 import type { Answer } from './types';
 
 const SAMPLES = 4000;
@@ -68,6 +74,147 @@ describe('how long somebody takes', () => {
     const rate = (text: string) =>
       delays(text).filter((d) => missesTurn(d, WINDOW)).length / SAMPLES;
     expect(rate('x'.repeat(90))).toBeGreaterThan(rate('yeah'));
+  });
+});
+
+/**
+ * The one seat that has to land. Only the test harness uses it: in a match the
+ * impostor misses turns like everybody else, and that is deliberate.
+ */
+describe('the answer that is not allowed to miss', () => {
+  const within = (text: string) =>
+    Array.from({ length: SAMPLES }, () => answerDelayWithin(text, WINDOW));
+
+  it('never runs past the clock, however long the answer', () => {
+    const sample = within('x'.repeat(200));
+    expect(sample.filter((d) => missesTurn(d, WINDOW))).toHaveLength(0);
+  });
+
+  it('leaves room to send before the room enforces the deadline', () => {
+    expect(Math.max(...within('x'.repeat(200)))).toBeLessThan(WINDOW * 0.9);
+  });
+
+  // Clamping the tail is not the same as flattening the draw: what was going
+  // to land on time still lands when it was going to.
+  it('is the same draw everywhere it already fitted', () => {
+    const clamped = median(within('yeah'));
+    const raw = median(delays('yeah'));
+    expect(Math.abs(clamped - raw) / raw).toBeLessThan(0.15);
+  });
+
+  it('still takes longer over a longer answer', () => {
+    expect(median(within('x'.repeat(90)))).toBeGreaterThan(median(within('yeah')));
+  });
+});
+
+describe('the turn everybody is answering on', () => {
+  // Five people asked the same question in turn is not a conversation, and
+  // spending your go on somebody else's answer is a go where you never gave
+  // one: pineapple is on screen, and instead of saying pepperoni it said that
+  // pineapple is not a topping.
+  const round = [
+    answer('a', { playerId: 'p_nedim', text: 'pineapple' }),
+    answer('b', { playerId: 'p_emil', text: 'mushroom' }),
+    answer('c', { playerId: 'p_kofi', text: 'plain cheese' }),
+  ];
+
+  const rate = (selfId?: string) =>
+    Array.from({ length: SAMPLES }, () => pickReplyTarget(round, selfId)).filter(Boolean)
+      .length / SAMPLES;
+
+  it('mostly just answers, when it has not answered yet', () => {
+    expect(rate('p_you')).toBeLessThan(0.2);
+  });
+
+  it('does not go silent about it either', () => {
+    expect(rate('p_you')).toBeGreaterThan(0.05);
+  });
+
+  it('talks back far more once its own answer is in', () => {
+    const spokenAlready = [...round, answer('d', { playerId: 'p_you', text: 'pepperoni' })];
+    const after =
+      Array.from({ length: SAMPLES }, () =>
+        pickReplyTarget(spokenAlready, 'p_you')
+      ).filter(Boolean).length / SAMPLES;
+    expect(after).toBeGreaterThan(rate('p_you') * 2);
+  });
+});
+
+describe('being written at', () => {
+  const spoken = [
+    answer('a', { playerId: 'p_nedim', text: 'the office' }),
+    answer('b', { playerId: 'p_you', text: 'only 12 eps' }),
+    answer('c', { playerId: 'p_emil', text: 'true', replyToId: 'b' }),
+    answer('d', { playerId: 'p_kofi', text: 'lol' }),
+  ];
+
+  const picks = (selfId?: string) =>
+    Array.from({ length: SAMPLES }, () => pickReplyTarget(spoken, selfId));
+
+  // A reply arrives with your own words quoted in it. Carrying on as though
+  // it had not is the thing people notice.
+  it('usually writes back at whoever wrote at you', () => {
+    const rate = picks('p_you').filter((id) => id === 'c').length / SAMPLES;
+    expect(rate).toBeGreaterThan(0.6);
+  });
+
+  it('reaches past a newer message to do it', () => {
+    // 'd' is the most recent line; 'c' is the one aimed at this player.
+    const sample = picks('p_you');
+    expect(sample.filter((id) => id === 'c').length).toBeGreaterThan(
+      sample.filter((id) => id === 'd').length
+    );
+  });
+
+  // The bug this exists for: the same question got answered every turn for
+  // the rest of the round while the room moved on to something else.
+  it('lets go of a reply once it has written back', () => {
+    const andBack = [
+      ...spoken,
+      answer('e', { playerId: 'p_you', text: 'yeah', replyToId: 'c' }),
+      answer('f', { playerId: 'p_nedim', text: 'anyway' }),
+    ];
+    expect(
+      Array.from({ length: SAMPLES }, () => pickReplyTarget(andBack, 'p_you')).filter(
+        (id) => id === 'c'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('picks up a fresh one written at it after that', () => {
+    const askedAgain = [
+      ...spoken,
+      answer('e', { playerId: 'p_you', text: 'yeah', replyToId: 'c' }),
+      answer('f', { playerId: 'p_nedim', text: 'which season though', replyToId: 'e' }),
+    ];
+    const rate =
+      Array.from({ length: SAMPLES }, () => pickReplyTarget(askedAgain, 'p_you')).filter(
+        (id) => id === 'f'
+      ).length / SAMPLES;
+    expect(rate).toBeGreaterThan(0.6);
+  });
+
+  it('never writes back at the same message twice', () => {
+    const already = [
+      answer('a', { playerId: 'p_nedim', text: 'the office' }),
+      answer('b', { playerId: 'p_you', text: 'agreed', replyToId: 'a' }),
+      answer('c', { playerId: 'p_emil', text: 'sure' }),
+      answer('d', { playerId: 'p_kofi', text: 'lol' }),
+    ];
+    expect(
+      Array.from({ length: SAMPLES }, () => pickReplyTarget(already, 'p_you')).filter(
+        (id) => id === 'a'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('leaves everybody else on the ordinary draw', () => {
+    const rate = picks('p_kofi').filter((id) => id === 'c').length / SAMPLES;
+    expect(rate).toBeLessThan(0.5);
+  });
+
+  it('is nobody\'s reply when the seat is not given', () => {
+    expect(picks().filter((id) => id === 'c').length / SAMPLES).toBeLessThan(0.5);
   });
 });
 

@@ -87,6 +87,18 @@ describe('what the impostor is told', () => {
     expect(turn.prompt).toBe(state.prompt);
   });
 
+  // The transcript is not a roster: a player who walked out is still all over
+  // it, and the impostor turned on one of them twice in a round they had left.
+  it('says who is still in the room, which the transcript cannot', () => {
+    let state = seated();
+    const gone = state.players.find((p) => !p.isYou)!;
+    state = play(state, { type: 'playerLeft', playerId: gone.id });
+
+    const names = impostorTurn(state).stillIn;
+    expect(names).not.toContain(gone.name);
+    expect(names).toContain('Nedim');
+  });
+
   it('sends the name the room already sees on its seat', () => {
     const state = seated();
     const seat = state.players.find((p) => p.id === state.impostorId)!;
@@ -122,6 +134,25 @@ describe('what the impostor is told', () => {
     // But it still knows what it said, and only what it said.
     expect(turn.ownHistory.length).toBeGreaterThan(0);
     expect(turn.ownHistory.every((line) => line.includes(impostorId))).toBe(true);
+  });
+
+  // The room draws a reply under the message it answers. Flattened to name
+  // and text, the impostor could not see that anything had been aimed at it.
+  it('carries who each line was written at, itself included', () => {
+    let state = seated();
+    state = answerAs(state, 'first');
+    const target = state.transcript[0];
+    state = play(state, {
+      type: 'answerTurn',
+      text: 'second',
+      timedOut: false,
+      replyToId: target.id,
+    });
+
+    const author = state.players.find((p) => p.id === target.playerId)!;
+    const lines = impostorTurn(state).roundLines;
+    expect(lines[0].replyToName).toBeNull();
+    expect(lines[1].replyToName).toBe(author.name);
   });
 
   it('carries the message it is answering, so the words can be aimed at it', () => {
