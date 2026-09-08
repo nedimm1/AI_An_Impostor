@@ -39,6 +39,32 @@ function lanAddress() {
   return 'localhost';
 }
 
+/**
+ * The round, printed as the app plays it.
+ *
+ * The app has the better view of a match by a distance — it knows the seats,
+ * who the impostor is, who ran out of time, who walked out and how the vote
+ * went, and this process sees none of that. It used to print all of it to a
+ * console nobody can read: React Native stopped forwarding logs to the Metro
+ * terminal in 0.77, so an app's `console.log` now lives only in React Native
+ * DevTools. So it posts the lines here instead and they come out in the
+ * terminal that is already open, interleaved with what the model was drawn
+ * to do.
+ *
+ * Printed verbatim and never parsed. It is a debugging aid on a local
+ * machine, which is the only reason a server writing whatever it is sent to
+ * a terminal is acceptable — so it is capped, and control characters are
+ * taken out on the way through.
+ */
+function logLines(body) {
+  const lines = Array.isArray(body?.lines) ? body.lines : [];
+
+  for (const line of lines.slice(0, 200)) {
+    if (typeof line !== 'string') continue;
+    console.log(`  ${line.slice(0, 400).replace(/[\u0000-\u001f\u007f]/g, ' ')}`);
+  }
+}
+
 function json(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -79,7 +105,21 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, ...totals });
   }
 
+  if (req.method === 'POST' && req.url === '/log') {
+    try {
+      logLines(await readBody(req));
+    } catch {
+      // A log that can fail anything is worse than no log.
+    }
+    // Deliberately not a 204: Android's HTTP client rejects a no-content
+    // response that carries a body, which every other reply here does.
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method !== 'POST' || (req.url !== '/answer' && req.url !== '/vote')) {
+    // Said out loud, because a device knocking on the wrong door is
+    // indistinguishable from a device that never knocked.
+    console.log(`  ?? ${req.method} ${req.url}`);
     return json(res, 404, { error: 'not found' });
   }
   const voting = req.url === '/vote';
@@ -147,6 +187,7 @@ const server = http.createServer(async (req, res) => {
         result.text === null ? '(empty)' : result.text
       }${drawn ? `\n          ${drawn}` : ''}`
     );
+
 
     // The shape goes back with the line purely so the app can log it. Nothing
     // on the app side is allowed to depend on it.

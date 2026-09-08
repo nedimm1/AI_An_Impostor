@@ -13,6 +13,10 @@
 const {
   accusationsAgainst,
   answerShape,
+  trimClause,
+  addNaturalImperfection,
+  nearlyTheSame,
+  cleanText,
   isChallenge,
   isDisagreement,
   readSituation,
@@ -58,6 +62,170 @@ const lastMessage = (over = {}, shape = undefined) => {
   });
   return messages[messages.length - 1].content;
 };
+
+/**
+ * Quoting the room back at it.
+ *
+ * Once it is told to point at the words people actually used, most of its
+ * sharper lines carry a quote — and the wrapping-quote strip was taking the
+ * opening one off whatever it found, so the room was shown `incel alert" is
+ * too mean for a bot`.
+ */
+describe('tidying up what it wrote', () => {
+  // It quoted the room in typography — `"you have no evidence" reads real to
+  // me` — and was voted out on that message. People repeat the words; they
+  // do not punctuate them, and the app is already showing the quote.
+  it('keeps the words and drops the quote marks', () => {
+    expect(cleanText('"incel alert" is not a bot line')).toBe(
+      'incel alert is not a bot line'
+    );
+    expect(cleanText('\u201cyou have no evidence\u201d reads real')).toBe(
+      'you have no evidence reads real'
+    );
+  });
+
+  it('still unwraps a message that is nothing but a quoted answer', () => {
+    expect(cleanText('"pepperoni"')).toBe('pepperoni');
+    expect(cleanText("'i dont know'")).toBe('i dont know');
+  });
+
+  it('leaves an apostrophe where it belongs', () => {
+    expect(cleanText("thats mara's whole point")).toBe("thats mara's whole point");
+  });
+});
+
+/**
+ * "yeah exactly", and then "yeh exactly" four messages later, which between
+ * them were its entire contribution to the round.
+ */
+describe('not saying the same nothing twice', () => {
+  it('will not draw a one-word turn straight after one', () => {
+    const bands = new Set(
+      Array.from(
+        { length: 500 },
+        () => answerShape(true, { laterTurn: true, terse: true }).length
+      )
+    );
+    expect(bands.has('one to three words')).toBe(false);
+  });
+
+  it('leaves the band alone when the last thing it sent had something in it', () => {
+    const bands = new Set(
+      Array.from(
+        { length: 500 },
+        () => answerShape(true, { laterTurn: true }).length
+      )
+    );
+    expect(bands.has('one to three words')).toBe(true);
+  });
+
+  it('shows it what it has already sent this round', () => {
+    const content = lastMessage({
+      roundLines: [
+        { name: 'Tomas', text: 'i think tomas is right here', replyToName: null },
+        { name: 'AI', text: 'yeah exactly', replyToName: null },
+        { name: 'Priya', text: 'why you so defensive of her', replyToName: null },
+      ],
+      turnNumber: 2,
+    });
+    expect(content).toContain('You have already sent this in this round');
+    expect(content).toContain('- yeah exactly');
+    expect(content).toContain('not the same move twice');
+  });
+
+  it('reads a one-character difference as the same message', () => {
+    expect(nearlyTheSame('yeah exactly', 'yeh exactly')).toBe(true);
+    expect(nearlyTheSame('yeah exactly', 'Yeah, exactly!')).toBe(true);
+  });
+
+  it('leaves a different short message alone', () => {
+    expect(nearlyTheSame('yeah exactly', 'yeah fair')).toBe(false);
+    expect(nearlyTheSame('the jog thing is fake', 'the jog thing sounds fake')).toBe(false);
+  });
+
+  it('says nothing about it on a turn it has not spoken in', () => {
+    const content = lastMessage({
+      roundLines: [{ name: 'Tomas', text: 'look at my phone', replyToName: null }],
+      turnNumber: 2,
+    });
+    expect(content).not.toContain('You have already sent this in this round');
+  });
+});
+
+/**
+ * The four humans in a real round typed "sicence", "typ", "dosent" and
+ * "icebregg". Every line the impostor sent was spelled perfectly.
+ */
+describe('typing like a thumb', () => {
+  const slipped = (text, runs = 400) =>
+    Array.from({ length: runs }, () => addNaturalImperfection(text)).filter(
+      (out) => out !== text
+    );
+
+  it('mistypes a word sometimes, and leaves it alone the rest of the time', () => {
+    const rate = slipped('essays are easier than reading').length / 400;
+    expect(rate).toBeGreaterThan(0.3);
+    expect(rate).toBeLessThan(0.8);
+  });
+
+  it('keeps the first letter, so a typo stays the same word', () => {
+    for (const out of slipped('reading', 200)) {
+      expect(out[0]).toBe('r');
+      expect(out.length).toBeGreaterThan(4);
+    }
+  });
+
+  it('leaves short words alone, where a slip reads as a different word', () => {
+    expect(slipped('nah its ok', 200)).toEqual([]);
+  });
+});
+
+/**
+ * Everything after the first comma used to be cut off unless a clause had
+ * been drawn, which was four turns in five — so "nah, thats not it" went out
+ * as "nah", and every long line the room ever saw was comma-free by
+ * construction. Nobody writes like that.
+ */
+describe('length, and the commas that go with it', () => {
+  const draws = (over = {}, runs = 20000) =>
+    Array.from({ length: runs }, () => answerShape(true, over));
+
+  it('says something of some length about a third of the time', () => {
+    const sample = draws();
+    const long = sample.filter((shape) => shape.words[1] >= 8).length / sample.length;
+    expect(long).toBeGreaterThan(0.3);
+    expect(long).toBeLessThan(0.55);
+  });
+
+  it('still sends short ones, which is most of what a chat is', () => {
+    const sample = draws();
+    const short = sample.filter((shape) => shape.words[1] <= 7).length / sample.length;
+    expect(short).toBeGreaterThan(0.45);
+  });
+
+  it('lets a comma through on a long message however the draw went', () => {
+    expect(
+      trimClause('you have no evidence against me, that makes me think its you', {
+        clause: false,
+        list: false,
+        words: [8, 13],
+      })
+    ).toBe('you have no evidence against me, that makes me think its you');
+  });
+
+  it('still cuts the footnote off a three word message', () => {
+    expect(
+      trimClause('nah, its not that deep really', { clause: false, list: false, words: [1, 3] })
+    ).toBe('nah');
+  });
+
+  it('reaches for a comma far more on a long message than a short one', () => {
+    const rate = (words) =>
+      draws({}, 40000).filter((shape) => shape.words[1] === words && shape.clause).length /
+      Math.max(1, draws({}, 40000).filter((shape) => shape.words[1] === words).length);
+    expect(rate(13)).toBeGreaterThan(rate(3) * 3);
+  });
+});
 
 describe('being named', () => {
   it('does not read a question as an accusation', () => {
@@ -285,7 +453,7 @@ describe('reading the room', () => {
       'AI'
     );
     expect(read.suspects).toEqual(['Kofi']);
-    expect(roomNote(read)).toContain('not of you');
+    expect(roomNote(read)).toContain('not on you');
   });
 
   // One line each is not silence, and calling it silence pointed the impostor
@@ -525,6 +693,211 @@ describe('standing by what it said', () => {
   it('tells it that the reply was not agreement', () => {
     const content = lastMessage({ roundLines: CHALLENGED, turnNumber: 2 });
     expect(content).toContain('they are not agreeing with you');
+  });
+});
+
+/**
+ * The question at the top starts a conversation. It does not run a roll call.
+ *
+ * A room where one answer gets picked up, argued with and answered back is no
+ * longer going round the question, and the player who walks into that and
+ * posts their own topping as though the last three messages had not happened
+ * is the one everybody notices. So what the turn is for is read off the room
+ * rather than off the turn number.
+ */
+describe('a room that has stopped answering the question', () => {
+  const persona = { name: 'AI', brief: 'x', traits: [] };
+
+  const ANSWERING = [
+    { name: 'Nedim', text: 'pineapple', replyToName: null },
+    { name: 'Emil', text: 'mushroom', replyToName: null },
+    { name: 'Kofi', text: 'lol pineapple', replyToName: 'Nedim' },
+  ];
+
+  const ARGUING = [
+    { name: 'Nedim', text: 'pineapple', replyToName: null },
+    { name: 'Emil', text: 'pineapple on a pizza is a war crime', replyToName: 'Nedim' },
+    { name: 'Nedim', text: 'its the sweet and salty thing, thats the point', replyToName: 'Emil' },
+  ];
+
+  it('knows a round still going round from a conversation', () => {
+    expect(readRoom(ANSWERING, 'AI').talking).toBe(false);
+    expect(readRoom(ARGUING, 'AI').talking).toBe(true);
+  });
+
+  // "nah" and "lol" turn up in answers as often as in arguments. Something
+  // has to have actually been aimed at somebody.
+  it('does not mistake a round with filler in it for one', () => {
+    const filler = [
+      { name: 'Nedim', text: 'the office', replyToName: null },
+      { name: 'Emil', text: 'nah friends', replyToName: null },
+      { name: 'Kofi', text: 'lol', replyToName: null },
+    ];
+    expect(readRoom(filler, 'AI').talking).toBe(false);
+  });
+
+  it('still owes an answer to a room that is still asking for one', () => {
+    expect(answerShape(true, {}).answering).toBe(true);
+    expect(answerShape(true, { talking: true }).answering).toBe(false);
+  });
+
+  it('joins in instead, and its answer comes out inside that', () => {
+    const keys = stanceTable({ unanswered: true }).map((option) => option.key);
+    expect(keys).toContain('own');
+    expect(keys).toContain('disagree');
+    // A tangent from the one person who never answered is the worst of both.
+    expect(keys).not.toContain('tangent');
+
+    const own = stanceTable({ unanswered: true }).find((o) => o.key === 'own');
+    expect(own.note).toContain('have not said what your own answer');
+  });
+
+  it('is told to join the conversation rather than answer over it', () => {
+    const content = lastMessage({ roundLines: ARGUING, turnNumber: 1 });
+    expect(content).toContain('the room has stopped going round it');
+    expect(content).not.toContain('it is your turn to put up yours');
+  });
+
+  it('still answers when the room is going round the question', () => {
+    const content = lastMessage({ roundLines: ANSWERING, turnNumber: 1 });
+    expect(content).toContain('it is your turn to put up yours');
+  });
+
+  // Missing a turn is not the same as having answered. It had said nothing
+  // at all and was being told it had already answered earlier in the round.
+  it('does not tell a player who never spoke that it already answered', () => {
+    const content = lastMessage({ roundLines: ARGUING, turnNumber: 2 });
+    expect(content).not.toContain('already answered the question earlier');
+  });
+
+  it('reads its own line as having answered', () => {
+    const spoken = [...ARGUING, { name: 'AI', text: 'pepperoni', replyToName: null }];
+    expect(readRoom(spoken, 'AI').spokenYet).toBe(true);
+    expect(lastMessage({ roundLines: spoken, turnNumber: 2 })).toContain(
+      'already answered the question earlier'
+    );
+  });
+});
+
+/**
+ * The turn a name goes up.
+ *
+ * A real round: Priya said "Nadia is too rude I think she's the impostor",
+ * Jonas said "I think so too", and the impostor - drawn `own`, and told only
+ * that it did not need to defend itself - sent "rude is just how some people
+ * type". A generalisation about typing, from the one seat in the room with a
+ * stake in where the vote lands.
+ */
+describe('the room turning on somebody else', () => {
+  const NAMED = [
+    { name: 'Nadia', text: 'I dont believe you', replyToName: null },
+    { name: 'Priya', text: "Nadia is too rude I think she's the impostor", replyToName: null },
+    { name: 'Jonas', text: 'I think so too', replyToName: null },
+  ];
+
+  it('sees who is in the frame', () => {
+    expect(readRoom(NAMED, 'AI').suspects).toEqual(['Nadia']);
+  });
+
+  it('gives it something to do about it', () => {
+    const keys = stanceTable({ suspicion: true }).map((option) => option.key);
+    expect(keys).toContain('pile');
+    expect(keys).toContain('doubt');
+    // Wandering off the accusation is what somebody not following the room does.
+    expect(keys).not.toContain('tangent');
+    expect(keys).not.toContain('build');
+  });
+
+  it('leaves both of them off a room that has named nobody', () => {
+    const keys = stanceTable({}).map((option) => option.key);
+    expect(keys).not.toContain('pile');
+    expect(keys).not.toContain('doubt');
+  });
+
+  // It lost a match on exactly this: two people had put Nedim's name up, it
+  // spent both remaining turns on his side, and the two accusing him voted
+  // for it instead.
+  it('knows one persons theory from a room that has converged', () => {
+    const oneVoice = [
+      { name: 'Tomas', text: 'you are really sus man', replyToName: 'Nedim' },
+      { name: 'Tomas', text: 'still sus', replyToName: null },
+    ];
+    expect(readRoom(oneVoice, 'AI').piling).toBe(false);
+    expect(readRoom(NAMED, 'AI').piling).toBe(false);
+
+    const converged = [
+      { name: 'Nedim', text: 'Kofi wasnt an impostor what are you talking about', replyToName: null },
+      { name: 'Tomas', text: 'you are really sus man', replyToName: 'Nedim' },
+      { name: 'Priya', text: 'Its you Nedim admit it', replyToName: null },
+    ];
+    expect(readRoom(converged, 'AI').piling).toBe(true);
+  });
+
+  it('rarely takes the side of a name the room has settled on', () => {
+    const rate = (piling) =>
+      Array.from(
+        { length: 2000 },
+        () => answerShape(true, { laterTurn: true, suspicion: true, piling }).stance
+      ).filter((s) => s === 'doubt').length / 2000;
+
+    expect(rate(false)).toBeGreaterThan(0.1);
+    expect(rate(true)).toBeLessThan(0.09);
+    // Never doing it at all would be its own pattern.
+    expect(rate(true)).toBeGreaterThan(0.01);
+  });
+
+  it('makes having a view about it the likeliest thing, not the only thing', () => {
+    const sample = Array.from(
+      { length: 2000 },
+      () => answerShape(true, { laterTurn: true, suspicion: true }).stance
+    );
+    const rate = (key) => sample.filter((s) => s === key).length / sample.length;
+    expect(rate('pile') + rate('doubt')).toBeGreaterThan(0.35);
+    expect(rate('pile') + rate('doubt')).toBeLessThan(0.6);
+    // Backing every accusation would be its own pattern.
+    expect(rate('doubt')).toBeGreaterThan(0.1);
+  });
+
+  it('tells it what the turn is for, not only what it is not', () => {
+    const note = roomNote(readRoom(NAMED, 'AI'));
+    expect(note).toContain('The room has turned on Nadia');
+    expect(note).toContain('what you make of it is the thing worth saying');
+  });
+});
+
+/**
+ * If everybody is arguing, it argues.
+ */
+describe('a room mid-argument', () => {
+  it('does not change the subject in the middle of one', () => {
+    const keys = stanceTable({ argument: true }).map((option) => option.key);
+    expect(keys).not.toContain('tangent');
+    expect(keys).toContain('back');
+  });
+
+  it('makes having a view the likeliest thing in the room', () => {
+    const sample = Array.from(
+      { length: 2000 },
+      () => answerShape(true, { laterTurn: true, argument: true }).stance
+    );
+    const rate = (key) => sample.filter((s) => s === key).length / sample.length;
+    const engaged = rate('agree') + rate('disagree') + rate('back');
+    expect(engaged).toBeGreaterThan(0.55);
+    expect(rate('tangent')).toBe(0);
+    // Still an argument it is in, not one it is only reporting on.
+    expect(rate('disagree')).toBeGreaterThan(rate('agree'));
+  });
+
+  it('tells it to get into it rather than watch it', () => {
+    const note = roomNote(readRoom(
+      [
+        { name: 'Nedim', text: 'nah thats wrong', replyToName: 'Emil' },
+        { name: 'Emil', text: 'no it isnt, but ok', replyToName: 'Nedim' },
+      ],
+      'AI'
+    ));
+    expect(note).toContain('Get into it');
+    expect(note).not.toContain('stay out of it');
   });
 });
 

@@ -18,8 +18,19 @@ import { survivors, type Room } from './types';
  * turns: it is players times `turnsEach`, and it shrinks as the room does.
  * A per-turn chance quietly triples when the round length dial moves, which
  * is how a room of seven ends up empty by round three.
+ *
+ * Off, deliberately. It was 0.5, and half the rounds losing a seat is
+ * probably honest about a room of strangers — but a player disappearing
+ * mid-round takes the conversation with them, and the thing being read right
+ * now is what the impostor does in a conversation. A round that ends up
+ * three-handed because somebody rolled badly is a round that says nothing
+ * about that.
+ *
+ * Everything else here is left standing: the reducer still handles a
+ * departure, the room still renders one, and the impostor is still told who
+ * is left. Only the roll is gone, so putting it back is this number.
  */
-const DROPOUT_CHANCE_PER_ROUND = 0.5;
+const DROPOUT_CHANCE_PER_ROUND = 0;
 
 /** They go mid-turn rather than neatly between them, as people actually do. */
 const MIN_LEAVE_MS = 800;
@@ -41,6 +52,7 @@ export function useDropouts(room: Room | null, playerLeft: (playerId: string) =>
 
   useEffect(() => {
     if (phase !== 'answering' || turnsThisRound === 0) return;
+    if (DROPOUT_CHANCE_PER_ROUND <= 0) return;
     // Spread the round's chance evenly across the turns it actually has.
     const perTurn = 1 - Math.pow(1 - DROPOUT_CHANCE_PER_ROUND, 1 / turnsThisRound);
     if (Math.random() > perTurn) return;

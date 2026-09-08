@@ -22,6 +22,64 @@ import { useEffect, useRef } from 'react';
 import type { Room } from './types';
 import { playerById, roundAnswers, voteResult } from './types';
 
+/**
+ * Where the log actually goes.
+ *
+ * `console.log` in an app has nowhere to be read any more. React Native
+ * stopped forwarding logs to the Metro terminal in 0.77, so they exist only
+ * in React Native DevTools — a browser tab you have to keep open beside the
+ * phone you are already holding, which is exactly the amount of friction
+ * that stops a log being read.
+ *
+ * The impostor server is a terminal that is already open and already
+ * printing the other half of this, so the round is posted there and the two
+ * halves end up in one place. It goes to the same address the impostor does
+ * because that is the one this device is known to be able to reach; with no
+ * impostor there is no terminal to print to and this quietly does nothing.
+ */
+const SINK = process.env.EXPO_PUBLIC_IMPOSTOR_URL ?? '';
+
+/** Bounded, because a server that is not listening must not become a leak. */
+const MAX_QUEUED = 200;
+
+let queued: string[] = [];
+let sending: ReturnType<typeof setTimeout> | null = null;
+
+function send() {
+  sending = null;
+  const lines = queued;
+  queued = [];
+  // Fire and forget. A log that can fail the round it is logging is worse
+  // than no log at all.
+  fetch(`${SINK}/log`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ lines }),
+  }).catch(() => {});
+}
+
+/**
+ * One line of the log, to the console and to the terminal both.
+ *
+ * Batched on a short timer rather than sent per line, because a turn landing
+ * prints a handful at once and each one would otherwise be its own request
+ * from a phone.
+ */
+function print(line: string) {
+  console.log(line);
+  if (!SINK) return;
+  if (queued.length < MAX_QUEUED) queued.push(line);
+  sending ??= setTimeout(send, 50);
+}
+
+/*
+ * One line the moment the bundle loads, so the terminal says whether it is
+ * being talked to at all. Without it a silent log has three possible causes
+ * that look identical from the other end — a stale bundle, an address the
+ * device cannot reach, and a round that genuinely printed nothing.
+ */
+if (__DEV__) print(`── log connected${SINK ? '' : ' (no impostor url — nothing will be sent)'}`);
+
 /** What the server drew for a line, sent back purely so it can be printed. */
 export type ImpostorShape = {
   stance?: string | null;
@@ -32,6 +90,8 @@ export type ImpostorShape = {
   answering?: boolean;
   /** The line had a name in it and was asked for again without one. */
   renamed?: boolean;
+  /** The line repeated something it had already sent, and was asked again. */
+  repeated?: boolean;
 };
 
 /**
@@ -63,6 +123,7 @@ function shapeNote(shape: ImpostorShape | null) {
     shape.nameUse ? `names=${shape.nameUse}` : null,
     shape.react ? 'opens-on-a-reaction' : null,
     shape.renamed ? 'ASKED AGAIN (had a name in it)' : null,
+    shape.repeated ? 'ASKED AGAIN (was sending the same thing twice)' : null,
   ].filter(Boolean);
   return parts.length ? `   [${parts.join(' · ')}]` : '';
 }
@@ -98,14 +159,14 @@ export function useRoundLog(room: Room | null) {
       const seats = room.players
         .map((p) => `${p.name}${p.id === room.impostorId ? ' (impostor)' : ''}${p.isYou ? ' (you)' : ''}`)
         .join(', ');
-      console.log(`╔══ match ${room.id} ══`);
-      console.log(`║ ${seats}`);
+      print(`╔══ match ${room.id} ══`);
+      print(`║ ${seats}`);
     }
 
     if (room.round !== round.current) {
       round.current = room.round;
       printed.current = 0;
-      console.log(`╠══ round ${room.round} · ${room.prompt}`);
+      print(`╠══ round ${room.round} · ${room.prompt}`);
     }
 
     const lines = roundAnswers(room);
@@ -121,12 +182,12 @@ export function useRoundLog(room: Room | null) {
       const n = String(order.get(answer.id) ?? '?').padStart(2);
 
       if (answer.kind === 'departure') {
-        console.log(`║ ${n}   ${seat} left the room`);
+        print(`║ ${n}   ${seat} left the room`);
         continue;
       }
 
       if (answer.timedOut) {
-        console.log(`║ ${n} ${mark} ${seat} (ran out of time)`);
+        print(`║ ${n} ${mark} ${seat} (ran out of time)`);
         continue;
       }
 
@@ -136,7 +197,7 @@ export function useRoundLog(room: Room | null) {
           : null;
       const note = shapeNote(drawn);
 
-      console.log(`║ ${n} ${mark} ${seat}${at.padEnd(5)} ${answer.text}${note}`);
+      print(`║ ${n} ${mark} ${seat}${at.padEnd(5)} ${answer.text}${note}`);
     }
 
     printed.current = lines.length;
@@ -163,8 +224,8 @@ export function useRoundLog(room: Room | null) {
           ? `tied: ${result.playerIds.map((p) => playerById(room, p)?.name).join(' / ')}`
           : 'nobody';
 
-    console.log(`║ vote  ${votes}   =>  ${outcome}`);
+    print(`║ vote  ${votes}   =>  ${outcome}`);
     // The impostor's seat is the only thing here nobody in the room knows.
-    console.log(`║       impostor is ${playerById(room, room.impostorId)?.name}`);
+    print(`║       impostor is ${playerById(room, room.impostorId)?.name}`);
   }, [closed, room]);
 }

@@ -133,8 +133,38 @@ const REPLY_CHANCE_IN_THREAD = 0.72;
  * kind of wrong.
  */
 const REPLY_CHANCE_UNANSWERED = 0.12;
+
+/**
+ * The same person, once the room has stopped going round the question.
+ *
+ * The low rate above is true of a round that is still a queue, and only of
+ * that. The question at the top is a conversation starter: the moment one
+ * answer gets picked up and answered back, the room is talking rather than
+ * taking turns, and posting a cold answer into the middle of that is the
+ * conspicuous thing rather than the safe one. Somebody who has not answered
+ * yet still talks back a little less than somebody who has - their answer is
+ * the thing they have not said - which is why this sits under the in-thread
+ * rate rather than at it.
+ */
+const REPLY_CHANCE_UNANSWERED_TALKING = 0.55;
+
 /** Lines that have to be up before talking back is at full strength. */
 const REPLY_RAMP = 3;
+
+/**
+ * How much of the room is answering each other rather than the question.
+ *
+ * Counted off the reply arrows over the last few lines, because that is the
+ * one structural fact about a conversation the app already records. Two of
+ * them is a back and forth; one is somebody picking up an answer in a round
+ * that is otherwise still going round.
+ */
+const TALKING_WINDOW = 4;
+
+function roomIsTalking(spoken: Answer[]) {
+  const latest = spoken.slice(-TALKING_WINDOW);
+  return latest.filter((a) => a.replyToId !== null).length >= 2;
+}
 
 /**
  * How often somebody who has just been replied to writes back.
@@ -153,6 +183,41 @@ const REPLY_BACK_CHANCE = 0.78;
 /** How far back people bother to reach. Recent first, and steeply so. */
 const REACH_BACK = 4;
 const RECENCY_BIAS = 2.2;
+
+/**
+ * How much harder a message pulls for every other person already in its
+ * thread.
+ *
+ * Recency on its own gave everybody the same instinct — answer whatever was
+ * said last — and over a round that turns into two people in a private back
+ * and forth while the room's actual argument happens next to them. In one
+ * real round the impostor spent five turns alternating between two seats and
+ * never touched the row two other players were having about whether PB and J
+ * is a child's answer, which ran for four messages and pulled in a third
+ * person. Nobody sits out the loud thread. It is the one everybody is
+ * reading.
+ *
+ * Measured over the whole thread rather than the one message, because that
+ * is what a person is drawn to. Faced with a row three messages deep, nobody
+ * replies to the line that started it — they answer the newest thing in it.
+ * So the pull is spread over every message in the thread and recency picks
+ * the target inside it, which lands on the last word of the argument, where
+ * a person would.
+ *
+ * Its own lines are left out of the count. A thread is hot because other
+ * people are in it, and a seat that counted its own replies would find its
+ * own conversation hotter every time it spoke, which is the failure this is
+ * here to fix.
+ */
+const HEAT_BIAS = 1.0;
+
+/**
+ * How much less the person you last wrote back at pulls the next time.
+ *
+ * Not zero, because two people going at it for a few messages is a real
+ * thing that happens. It stops being one when it is every turn you take.
+ */
+const SAME_PARTNER_DAMP = 0.45;
 
 /**
  * Something to write back at, or null to answer the prompt cold. Pass the
@@ -210,17 +275,62 @@ export function pickReplyTarget(answers: Answer[], selfId?: string | null) {
   // Nobody replies to the first thing anybody said. From there it climbs.
   const warmth = Math.min(1, (spoken.length - 1) / REPLY_RAMP);
   const chance = !hasAnswered
-    ? REPLY_CHANCE_UNANSWERED
+    ? roomIsTalking(spoken)
+      ? REPLY_CHANCE_UNANSWERED_TALKING
+      : REPLY_CHANCE_UNANSWERED
     : lastWasReply
       ? REPLY_CHANCE_IN_THREAD
       : REPLY_CHANCE_COLD * warmth;
   if (Math.random() > chance) return null;
 
+  // Who this seat was last in a thread with, so a second turn spent on them
+  // is worth less than a first. Read off your own last reply rather than
+  // tracked, because that is all "who you are talking to" means here.
+  const lastPartner = (() => {
+    if (!selfId) return null;
+    const mine = spoken.filter((a) => a.playerId === selfId && a.replyToId !== null);
+    const last = mine[mine.length - 1];
+    if (!last) return null;
+    return spoken.find((a) => a.id === last.replyToId)?.playerId ?? null;
+  })();
+
+  // The top of whatever thread a message belongs to, so everything hanging
+  // off one line is measured together.
+  const byId = new Map(spoken.map((a) => [a.id, a]));
+
+  const rootOf = (answer: Answer) => {
+    let node = answer;
+    // Bounded: a transcript is not a data structure anybody has validated.
+    for (let step = 0; node.replyToId && step < 20; step++) {
+      const parent = byId.get(node.replyToId);
+      if (!parent) break;
+      node = parent;
+    }
+    return node.id;
+  };
+
+  const inThread = new Map<string, number>();
+  for (const answer of spoken) {
+    if (answer.playerId === selfId) continue;
+    const root = rootOf(answer);
+    inThread.set(root, (inThread.get(root) ?? 0) + 1);
+  }
+
+  // How many other people's messages are already gathered on this one.
+  const heat = (target: Answer) =>
+    Math.max(0, (inThread.get(rootOf(target)) ?? 1) - 1);
+
   // Weighted so the thing just said is far likelier to be picked up than
-  // something four turns ago that the room has moved past. Measured over what
-  // is still open, since a message already answered is not on the table.
+  // something four turns ago that the room has moved past — then pulled
+  // towards whatever the room is actually gathered around, and away from the
+  // seat this one has just been talking to.
   const recent = open.slice(-REACH_BACK);
-  const weights = recent.map((_, i) => Math.pow(RECENCY_BIAS, i));
+  const weights = recent.map(
+    (answer, i) =>
+      Math.pow(RECENCY_BIAS, i) *
+      (1 + HEAT_BIAS * heat(answer)) *
+      (lastPartner && answer.playerId === lastPartner ? SAME_PARTNER_DAMP : 1)
+  );
   const total = weights.reduce((sum, w) => sum + w, 0);
 
   let roll = Math.random() * total;

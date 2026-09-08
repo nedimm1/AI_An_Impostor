@@ -140,6 +140,98 @@ describe('the turn everybody is answering on', () => {
   });
 });
 
+describe('a room that has stopped answering the question', () => {
+  // The question is a conversation starter, not a roll call. Once two people
+  // are answering each other, a cold answer posted over the top of it is the
+  // conspicuous thing rather than the safe one.
+  const talking = [
+    answer('a', { playerId: 'p_nedim', text: 'pineapple' }),
+    answer('b', { playerId: 'p_emil', text: 'thats a war crime', replyToId: 'a' }),
+    answer('c', { playerId: 'p_nedim', text: 'sweet and salty', replyToId: 'b' }),
+  ];
+
+  const queue = [
+    answer('a', { playerId: 'p_nedim', text: 'pineapple' }),
+    answer('b', { playerId: 'p_emil', text: 'mushroom' }),
+    answer('c', { playerId: 'p_kofi', text: 'plain cheese' }),
+  ];
+
+  const rate = (round: Answer[]) =>
+    Array.from({ length: SAMPLES }, () => pickReplyTarget(round, 'p_you')).filter(Boolean)
+      .length / SAMPLES;
+
+  it('talks back into a conversation even before it has answered', () => {
+    expect(rate(talking)).toBeGreaterThan(0.4);
+  });
+
+  it('still mostly just answers a round that is still going round', () => {
+    expect(rate(talking)).toBeGreaterThan(rate(queue) * 2);
+  });
+});
+
+/**
+ * A real round: the impostor spent five turns alternating between two seats
+ * while two other players had a four-message row next to it, which a third
+ * person eventually joined. Nobody sits out the loud thread.
+ */
+describe('the thread the room is actually in', () => {
+  // Mara's line is the newest. Nedim's is older but two people have already
+  // answered it, which is what makes it the room's argument.
+  const round = [
+    answer('a', { playerId: 'p_nedim', text: 'PB and J sandwich' }),
+    answer('b', { playerId: 'p_emil', text: 'what are you a child', replyToId: 'a' }),
+    answer('c', { playerId: 'p_ines', text: 'brings me back to my childhood', replyToId: 'a' }),
+    answer('d', { playerId: 'p_mara', text: 'doner kebab' }),
+  ];
+
+  const picks = (selfId?: string) =>
+    Array.from({ length: SAMPLES }, () => pickReplyTarget(round, selfId)).filter(Boolean);
+
+  it('goes to the argument the room is having, not just the newest line', () => {
+    const chosen = picks('p_you');
+    const share = chosen.filter((p) => p === 'a' || p === 'b' || p === 'c').length;
+    expect(share / chosen.length).toBeGreaterThan(0.55);
+  });
+
+  // Nobody answers the message that started a row three deep. They answer
+  // the newest thing in it.
+  it('answers the newest thing in it rather than the line that started it', () => {
+    const chosen = picks('p_you');
+    const count = (id: string) => chosen.filter((p) => p === id).length;
+    expect(count('c')).toBeGreaterThan(count('a'));
+    expect(count('c')).toBeGreaterThan(count('d'));
+  });
+
+  it('still prefers what was just said when nothing has drawn a crowd', () => {
+    const flat = [
+      answer('a', { playerId: 'p_nedim' }),
+      answer('b', { playerId: 'p_emil' }),
+      answer('c', { playerId: 'p_ines' }),
+      answer('d', { playerId: 'p_mara' }),
+    ];
+    const chosen = Array.from({ length: SAMPLES }, () =>
+      pickReplyTarget(flat, 'p_you')
+    ).filter(Boolean);
+    const count = (id: string) => chosen.filter((p) => p === id).length;
+    expect(count('d')).toBeGreaterThan(count('a'));
+  });
+
+  // Two people going at it for a few messages is real. Every turn is not.
+  it('leans away from the seat it was just talking to', () => {
+    const dyad = [
+      answer('a', { playerId: 'p_mara', text: 'doner kebab' }),
+      answer('b', { playerId: 'p_you', text: 'garlic sauce or its pointless', replyToId: 'a' }),
+      answer('c', { playerId: 'p_mara', text: 'yeah boiii' }),
+      answer('d', { playerId: 'p_ines', text: 'thats a shawarma thing' }),
+    ];
+    const chosen = Array.from({ length: SAMPLES }, () =>
+      pickReplyTarget(dyad, 'p_you')
+    ).filter(Boolean);
+    const count = (id: string) => chosen.filter((p) => p === id).length;
+    expect(count('d')).toBeGreaterThan(count('c'));
+  });
+});
+
 describe('being written at', () => {
   const spoken = [
     answer('a', { playerId: 'p_nedim', text: 'the office' }),
