@@ -16,9 +16,34 @@
  * This module should stay server-side.
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
+const { OpenRouter } = require('./openrouter');
 
-const MODEL = 'claude-opus-5';
+/**
+ * The model, on OpenRouter.
+ *
+ * `:free` is not a discount, it is a shared pool: the request goes to Google
+ * AI Studio's free allowance alongside everyone else's, and when that pool is
+ * busy it answers 429 rather than queueing. The client retries, and the room
+ * already falls back to a stock line when a turn cannot be written, so a busy
+ * pool costs the impostor a turn rather than the match. Drop the `:free` (or
+ * set OPENROUTER_MODEL) to route to the paid copy of the same weights.
+ */
+const MODEL = process.env.OPENROUTER_MODEL ?? 'google/gemma-4-31b-it:free';
+
+/**
+ * Models to try when the first one is rate-limited, in order.
+ *
+ * Empty by default — a second model is a second voice, and a match where the
+ * impostor changes writing style halfway through is worse than one where it
+ * occasionally sends a stock line. Set it when you would rather have a turn
+ * than have it consistent.
+ *
+ *   export OPENROUTER_FALLBACK_MODELS=google/gemma-4-26b-a4b-it:free
+ */
+const FALLBACKS = (process.env.OPENROUTER_FALLBACK_MODELS ?? '')
+  .split(',')
+  .map((name) => name.trim())
+  .filter(Boolean);
 
 let client = null;
 
@@ -1936,26 +1961,22 @@ function buildMessages(turn) {
     });
 
     /*
-     * Cache breakpoint.
+     * An acknowledgement, and once a cache breakpoint.
      *
      * Everything above this line is fixed for the rest of the round — the
-     * system prompt, the persona, and what this player has already said.
-     * Everything below it (the room's latest lines, the question, this turn's
-     * shape) changes every call, so caching the volatile half would cache
-     * nothing twice.
+     * system prompt, the persona, and what this player has already said —
+     * and under Anthropic this message carried a `cache_control` marker so
+     * that half was billed at a tenth of the price. OpenRouter does not sell
+     * caching on Gemma, so the marker is gone and the saving with it.
      *
-     * Worth roughly five hundred tokens a round served at a tenth of the
-     * price. It is only cost, but it is free.
+     * The message itself stays. Gemma's chat template wants the turns to
+     * alternate, and without an assistant turn here the memory block and the
+     * question below it would run together into one user message — which is
+     * exactly the seam the memory is supposed to sit behind.
      */
     messages.push({
       role: 'assistant',
-      content: [
-        {
-          type: 'text',
-          text: 'ok',
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
+      content: 'ok',
     });
   }
 
@@ -2402,7 +2423,7 @@ Return exactly one candidate name and nothing else.
  * Vote for a player.
  */
 async function castVote(turn) {
-  client ??= new Anthropic();
+  client ??= new OpenRouter();
 
   const persona =
     turn.persona ??
@@ -2467,9 +2488,7 @@ ${
 
       max_tokens: 50,
 
-      output_config: {
-        effort: 'low',
-      },
+      fallbacks: FALLBACKS,
 
       system:
         votePrompt(persona),
@@ -2528,7 +2547,7 @@ ${
 
 
   /*
-   * If Claude accidentally adds punctuation,
+   * If the model accidentally adds punctuation,
    * normalize it.
    */
   if (!picked) {
@@ -2665,7 +2684,7 @@ function addUsage(first, second) {
  * ============================================================ */
 
 async function writeAnswer(turn) {
-  client ??= new Anthropic();
+  client ??= new OpenRouter();
 
   const persona =
     turn.persona ??
@@ -2754,9 +2773,7 @@ async function writeAnswer(turn) {
         ? 180
         : 100,
 
-    output_config: {
-      effort: 'low',
-    },
+    fallbacks: FALLBACKS,
 
     system:
       systemPrompt(

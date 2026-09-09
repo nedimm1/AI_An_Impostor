@@ -19,22 +19,34 @@
  * beat a model of the numbers, and this file is only useful until then.
  *
  *   node scripts/model-cost.js
- *   node scripts/model-cost.js --turns 4 --cache 0.6 --model haiku
+ *   node scripts/model-cost.js --turns 4 --model gemma-small
  *   node scripts/model-cost.js --rounds 5 --tiebreakers 0.4 --model-votes
  */
 
 const fs = require('fs');
 const path = require('path');
 
-/** Per million tokens, from the Anthropic pricing table. */
+/**
+ * Per million tokens, from the OpenRouter pricing table.
+ *
+ * The game runs on the free copy of Gemma, where every row below is zero and
+ * this script has nothing to say. It is kept pointed at the paid copy because
+ * the question it answers — what a round of this length costs at scale — is a
+ * question about the day the free tier is not enough, and that is the day the
+ * numbers here start to matter.
+ */
 const MODELS = {
-  'fable-5.1': { id: 'claude-fable-5-1', input: 10, output: 50 },
-  opus: { id: 'claude-opus-5', input: 5, output: 25 },
-  sonnet: { id: 'claude-sonnet-5', input: 2, output: 10 },
-  haiku: { id: 'claude-haiku-4-5', input: 1, output: 5 },
+  gemma: { id: 'google/gemma-4-31b-it:free', input: 0, output: 0 },
+  'gemma-paid': { id: 'google/gemma-4-31b-it', input: 0.09, output: 0.34 },
+  'gemma-small': { id: 'google/gemma-4-26b-a4b-it', input: 0.07, output: 0.34 },
+  'gemma-batch': { id: 'google/gemma-4-31b-it:batch', input: 0.39, output: 0.97 },
 };
 
-/** Cached input is billed at roughly a tenth of the normal input rate. */
+/**
+ * Cached input is billed at roughly a tenth of the normal input rate — where
+ * it is sold at all. It is not sold on Gemma, so the default below is 0 and
+ * this multiplier only applies if you point the script at a model that has it.
+ */
 const CACHE_READ_MULTIPLIER = 0.1;
 
 /**
@@ -172,7 +184,7 @@ function main() {
   if (cli.turns) settings.turnsEach = cli.turns;
 
   const a = { ...ASSUMPTIONS, ...cli };
-  const modelKey = a.model && MODELS[a.model] ? a.model : 'opus';
+  const modelKey = a.model && MODELS[a.model] ? a.model : 'gemma-paid';
   const model = MODELS[modelKey];
 
   const { calls, inputTokens, outputTokens } = priceMatch(settings, a);
@@ -214,7 +226,7 @@ function main() {
   for (const [key, m] of Object.entries(MODELS)) {
     const cost = (billedInput / 1e6) * m.input + (outputTokens / 1e6) * m.output;
     console.log(
-      `    ${key.padEnd(10)} ${money(cost).padStart(8)}/match   ${money(cost * a.matches * 30).padStart(9)}/month at ${a.matches}/day`
+      `    ${key.padEnd(12)} ${money(cost).padStart(8)}/match   ${money(cost * a.matches * 30).padStart(9)}/month at ${a.matches}/day`
     );
   }
   console.log(

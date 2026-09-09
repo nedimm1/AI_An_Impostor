@@ -13,7 +13,7 @@
  * and it must not be exposed beyond your own network. What it is for is
  * playing the game against a model on a device in your hand, today.
  *
- *   export ANTHROPIC_API_KEY=sk-ant-...
+ *   export OPENROUTER_API_KEY=sk-or-v1-...
  *   npm run impostor:server
  *
  * It prints the LAN address to put in the app. On a simulator localhost works;
@@ -22,13 +22,27 @@
 
 const http = require('http');
 const os = require('os');
+const path = require('path');
+
+/*
+ * `.env`, if there is one.
+ *
+ * Node reads it natively now, and this is the only place the key is allowed
+ * to come from besides the environment. Wrapped because a missing `.env` is
+ * the normal case for anyone exporting the variable by hand.
+ */
+try {
+  process.loadEnvFile(path.join(__dirname, '..', '.env'));
+} catch {
+  // No .env. The environment is expected to carry the key instead.
+}
 
 const { castVote, writeAnswer } = require('./impostor');
 
 const PORT = Number(process.env.IMPOSTOR_PORT ?? 8787);
 
 /** Running totals, so a session of play reports what it really cost. */
-const totals = { calls: 0, votes: 0, failures: 0, empties: 0, input: 0, cached: 0, output: 0 };
+const totals = { calls: 0, votes: 0, failures: 0, empties: 0, input: 0, cached: 0, output: 0, cost: 0 };
 
 function lanAddress() {
   for (const entries of Object.values(os.networkInterfaces())) {
@@ -146,6 +160,7 @@ const server = http.createServer(async (req, res) => {
       totals.votes += 1;
       totals.output += result.usage.output_tokens ?? 0;
       totals.input += result.usage.input_tokens ?? 0;
+      totals.cost += result.usage.cost ?? 0;
       console.log(
         `  ${String(Date.now() - started).padStart(5)}ms  ${result.persona.name.padEnd(6)} votes ${
           result.name ?? '(no valid name)'
@@ -168,6 +183,7 @@ const server = http.createServer(async (req, res) => {
     totals.input += result.usage.input_tokens ?? 0;
     totals.cached += result.usage.cache_read_input_tokens ?? 0;
     totals.output += result.usage.output_tokens ?? 0;
+    totals.cost += result.usage.cost ?? 0;
 
     const took = Date.now() - started;
 
@@ -201,9 +217,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
+if (!process.env.OPENROUTER_API_KEY) {
   console.error(
-    '\nNo credentials. Set ANTHROPIC_API_KEY and run again.\nThe key stays in this process — it is never sent to the app.\n'
+    '\nNo credentials. Set OPENROUTER_API_KEY and run again.\nThe key stays in this process — it is never sent to the app.\n'
   );
   process.exit(1);
 }
@@ -218,11 +234,14 @@ server.listen(PORT, () => {
 /** A session of play is a real cost measurement. Print it on the way out. */
 function report() {
   if (totals.calls > 0 || totals.votes > 0) {
-    const cost = ((totals.input + totals.cached * 0.1) / 1e6) * 5 + (totals.output / 1e6) * 25;
     console.log(
       `\n  ${totals.calls} turns, ${totals.votes} votes, ${totals.empties} empty, ${totals.failures} failed`
     );
-    console.log(`  $${cost.toFixed(4)} of model\n`);
+    console.log(`  ${totals.input + totals.output} tokens`);
+    // Not a price table any more: OpenRouter reports what each call actually
+    // cost, so this is the real number rather than an estimate of it. On a
+    // `:free` model it is zero, and the figure to watch is `failed` instead.
+    console.log(`  $${totals.cost.toFixed(4)} of model\n`);
   }
   process.exit(0);
 }

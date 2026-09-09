@@ -23,6 +23,7 @@ import {
 } from './humanlike';
 import { impostorEnabled, requestImpostorAnswer, requestImpostorVote } from './impostor';
 import { mockAnswer } from './mock';
+import { noteImpostorFallback } from './round-log';
 import { TEST_MODE } from './testing';
 import { currentTurnId, roundAnswers, survivors, type Answer, type Room } from './types';
 
@@ -126,7 +127,11 @@ export function useBotTurns(
         // Under test it is also the only player answering itself, so it does
         // not get to draw a turn it sits out: the clock is on to see whether
         // the model comes back in time, not to watch it roll a miss.
-        scheduleSend(text ?? mockAnswer(), !TEST_MODE);
+        // Bind the reason the call failed to the stock line standing in for
+        // it, so the round log can say which lines the model never wrote.
+        const line = text ?? mockAnswer();
+        if (text === null) noteImpostorFallback(line);
+        scheduleSend(line, !TEST_MODE);
       });
     }
 

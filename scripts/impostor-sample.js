@@ -15,7 +15,7 @@
  * persona repeating its own sentence structure is the tell this exists to
  * find.
  *
- *   export ANTHROPIC_API_KEY=sk-ant-...
+ *   export OPENROUTER_API_KEY=sk-or-v1-...
  *   npm run impostor:sample
  *   npm run impostor:sample -- --limit 8 --persona 2
  */
@@ -23,26 +23,35 @@
 const fs = require('fs');
 const path = require('path');
 
+/*
+ * `.env`, if there is one.
+ *
+ * Node reads it natively now, and this is the only place the key is allowed
+ * to come from besides the environment. Wrapped because a missing `.env` is
+ * the normal case for anyone exporting the variable by hand.
+ */
+try {
+  process.loadEnvFile(path.join(__dirname, '..', '.env'));
+} catch {
+  // No .env. The environment is expected to carry the key instead.
+}
+
 const { writeAnswer, PERSONAS, MODEL } = require('../server/impostor');
 
 const ROOT = path.join(__dirname, '..');
 
-/** Per million tokens. Kept in step with `scripts/model-cost.js`. */
-const PRICES = {
-  'claude-fable-5-1': { input: 10, output: 50 },
-  'claude-opus-5': { input: 5, output: 25 },
-  'claude-sonnet-5': { input: 2, output: 10 },
-  'claude-haiku-4-5': { input: 1, output: 5 },
-};
+/**
+ * Short names for the command line, so `--model gemma` works.
+ *
+ * The cost is no longer estimated from a table here: OpenRouter reports what
+ * each call actually cost in `usage.cost`, and a measured number beats a
+ * model of one. On a `:free` model it is zero.
+ */
 const ALIASES = {
-  'fable-5.1': 'claude-fable-5-1',
-  opus: 'claude-opus-5',
-  sonnet: 'claude-sonnet-5',
-  haiku: 'claude-haiku-4-5',
+  gemma: 'google/gemma-4-31b-it:free',
+  'gemma-paid': 'google/gemma-4-31b-it',
+  'gemma-small': 'google/gemma-4-26b-a4b-it:free',
 };
-
-const CACHE_WRITE_MULTIPLIER = 1.25;
-const CACHE_READ_MULTIPLIER = 0.1;
 
 function parseArgs(argv) {
   const args = {};
@@ -90,7 +99,6 @@ function spread(values) {
 async function main() {
   const cli = parseArgs(process.argv.slice(2));
   const model = ALIASES[cli.model] ?? cli.model ?? MODEL;
-  const price = PRICES[model] ?? PRICES[MODEL];
 
   const prompts = readPrompts();
   const stock = readStockAnswers();
@@ -105,8 +113,8 @@ async function main() {
       : Math.floor(Math.random() * PERSONAS.length);
   const persona = { name: NAMES[index], ...PERSONAS[index] };
 
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    console.error('\nNo credentials. Set ANTHROPIC_API_KEY and run again.\n');
+  if (!process.env.OPENROUTER_API_KEY) {
+    console.error('\nNo credentials. Set OPENROUTER_API_KEY and run again.\n');
     process.exit(1);
   }
 
@@ -118,7 +126,7 @@ async function main() {
 
   const ownHistory = [];
   const rows = [];
-  const usage = { calls: 0, empties: 0, input: 0, cacheWrite: 0, cacheRead: 0, output: 0 };
+  const usage = { calls: 0, empties: 0, input: 0, cacheWrite: 0, cacheRead: 0, output: 0, cost: 0 };
   const started = Date.now();
 
   for (let i = 0; i < limit; i++) {
@@ -147,6 +155,7 @@ async function main() {
     usage.cacheWrite += result.usage.cache_creation_input_tokens ?? 0;
     usage.cacheRead += result.usage.cache_read_input_tokens ?? 0;
     usage.output += result.usage.output_tokens ?? 0;
+    usage.cost += result.usage.cost ?? 0;
 
     if (result.text === null) {
       usage.empties += 1;
@@ -166,10 +175,8 @@ async function main() {
 
   if (usage.calls === 0) process.exit(1);
 
-  const billed =
-    usage.input + usage.cacheWrite * CACHE_WRITE_MULTIPLIER + usage.cacheRead * CACHE_READ_MULTIPLIER;
-  const cost = (billed / 1e6) * price.input + (usage.output / 1e6) * price.output;
-  const totalInput = usage.input + usage.cacheWrite + usage.cacheRead;
+  const cost = usage.cost;
+  const totalInput = usage.input;
   const cachedShare = totalInput > 0 ? usage.cacheRead / totalInput : 0;
 
   console.log(`  what it cost`);

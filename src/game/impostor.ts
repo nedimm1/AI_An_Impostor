@@ -14,7 +14,7 @@
  * reason the transport seam exists.
  */
 
-import { noteImpostorShape } from './round-log';
+import { noteImpostorFailure, noteImpostorShape, noteImpostorVoteFallback } from './round-log';
 import {
   answerById,
   currentTurnNumber,
@@ -202,10 +202,16 @@ export async function requestImpostorVote(
   room: Room,
   timeoutMs: number
 ): Promise<string | null> {
-  if (!impostorEnabled()) return null;
+  if (!impostorEnabled()) {
+    noteImpostorVoteFallback('no impostor url configured');
+    return null;
+  }
 
   const ballot = impostorBallot(room);
-  if (ballot.candidates.length === 0) return null;
+  if (ballot.candidates.length === 0) {
+    noteImpostorVoteFallback('nobody left to vote for');
+    return null;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -217,10 +223,18 @@ export async function requestImpostorVote(
       body: JSON.stringify(ballot),
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      noteImpostorVoteFallback(
+        response.status === 502 ? 'model failed upstream' : `proxy said ${response.status}`
+      );
+      return null;
+    }
 
     const body = (await response.json()) as { name?: string | null };
-    if (typeof body.name !== 'string') return null;
+    if (typeof body.name !== 'string') {
+      noteImpostorVoteFallback('no name came back');
+      return null;
+    }
 
     // Back to a seat. The name is checked against the room rather than
     // trusted, since a vote for somebody who is not in it would be dropped
@@ -228,8 +242,13 @@ export async function requestImpostorVote(
     const target = survivors(room).find(
       (p) => p.id !== room.impostorId && p.name.toLowerCase() === body.name!.toLowerCase()
     );
+    if (!target) noteImpostorVoteFallback('voted for somebody not in the room');
+    else noteImpostorVoteFallback(null);
     return target?.id ?? null;
   } catch {
+    noteImpostorVoteFallback(
+      controller.signal.aborted ? 'too slow — deadline passed' : 'server unreachable'
+    );
     return null;
   } finally {
     clearTimeout(timer);
@@ -253,7 +272,14 @@ export async function requestImpostorAnswer(
   timeoutMs: number,
   replyToId: string | null = null
 ): Promise<string | null> {
-  if (!impostorEnabled()) return null;
+  // Anything left over from a turn that was abandoned is not this turn's
+  // reason, and must not be printed as though it were.
+  noteImpostorFailure(null);
+
+  if (!impostorEnabled()) {
+    noteImpostorFailure('no impostor url configured');
+    return null;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -265,7 +291,15 @@ export async function requestImpostorAnswer(
       body: JSON.stringify(impostorTurn(room, replyToId)),
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      // 502 is the proxy saying the model failed; anything else is the proxy
+      // itself. Worth telling apart — one is a bad model day, the other is a
+      // bad address.
+      noteImpostorFailure(
+        response.status === 502 ? 'model failed upstream' : `proxy said ${response.status}`
+      );
+      return null;
+    }
 
     const body = (await response.json()) as {
       text?: string | null;
@@ -279,9 +313,13 @@ export async function requestImpostorAnswer(
 
     noteImpostorShape(body.shape ?? null, text);
 
+    if (text === '') noteImpostorFailure('model returned nothing');
     return text === '' ? null : text;
   } catch {
-    // Includes the abort. Nothing here is worth distinguishing.
+    // The room still cannot tell these apart, and must not. The log can.
+    noteImpostorFailure(
+      controller.signal.aborted ? 'too slow — deadline passed' : 'server unreachable'
+    );
     return null;
   } finally {
     clearTimeout(timer);

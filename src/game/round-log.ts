@@ -115,6 +115,56 @@ export function noteImpostorShape(shape: ImpostorShape | null, text: string | nu
   shapes.set(text.trim(), shape);
 }
 
+/**
+ * Why the room was given a stock line instead of the model's.
+ *
+ * `requestImpostorAnswer` collapses every failure to null on purpose — from
+ * inside the room there is genuinely no difference between a model that
+ * refused and a server that was never started, and the game must not behave
+ * differently. The log is the one place the difference matters, and it is the
+ * difference between "Gemma wrote that" and "Gemma was never asked". Two
+ * rounds were spent judging a model on `mock.ts` for want of this line.
+ *
+ * Recorded in two steps because the reason is known when the call fails and
+ * the stock line is not chosen until afterwards.
+ */
+let pendingFallback: string | null = null;
+
+/** The impostor's ballot fell back to a random vote, and this is why. */
+let voteFallback: string | null = null;
+
+export function noteImpostorVoteFallback(reason: string | null) {
+  voteFallback = reason;
+}
+
+/**
+ * The model did not answer, and this is why. Null clears it.
+ *
+ * Cleared at the start of every request, not only when one fails: a turn that
+ * is cancelled after failing leaves its reason behind, and the next stock line
+ * would then be labelled with the previous turn's excuse. This file's whole
+ * position is that a log which misattributes is worse than no log.
+ */
+export function noteImpostorFailure(reason: string | null) {
+  pendingFallback = reason;
+}
+
+/** Bind that reason to the stock line the room was handed instead. */
+export function noteImpostorFallback(text: string | null) {
+  if (!text || !pendingFallback) return;
+  if (fallbacks.size > 20) fallbacks.clear();
+  fallbacks.set(text.trim(), pendingFallback);
+  pendingFallback = null;
+}
+
+/** Keyed by text, exactly like the shapes, and bounded for the same reason. */
+const fallbacks = new Map<string, string>();
+
+/** Why this line is a stock one, or null if the model actually wrote it. */
+export function fallbackFor(text: string): string | null {
+  return fallbacks.get(text.trim()) ?? null;
+}
+
 function shapeNote(shape: ImpostorShape | null) {
   if (!shape) return '';
   const parts = [
@@ -191,11 +241,15 @@ export function useRoundLog(room: Room | null) {
         continue;
       }
 
-      const drawn =
-        answer.playerId === room.impostorId
-          ? (shapes.get(answer.text.trim()) ?? null)
-          : null;
-      const note = shapeNote(drawn);
+      const isImpostor = answer.playerId === room.impostorId;
+      const drawn = isImpostor ? (shapes.get(answer.text.trim()) ?? null) : null;
+
+      /*
+       * A stock line says so, loudly. Everything else in this log is a note
+       * about what the model did; this is the one that says it did nothing.
+       */
+      const fellBack = isImpostor ? (fallbacks.get(answer.text.trim()) ?? null) : null;
+      const note = fellBack ? `   [STOCK — ${fellBack}]` : shapeNote(drawn);
 
       print(`║ ${n} ${mark} ${seat}${at.padEnd(5)} ${answer.text}${note}`);
     }
@@ -225,6 +279,7 @@ export function useRoundLog(room: Room | null) {
           : 'nobody';
 
     print(`║ vote  ${votes}   =>  ${outcome}`);
+    if (voteFallback) print(`║       impostor voted at random — ${voteFallback}`);
     // The impostor's seat is the only thing here nobody in the room knows.
     print(`║       impostor is ${playerById(room, room.impostorId)?.name}`);
   }, [closed, room]);
