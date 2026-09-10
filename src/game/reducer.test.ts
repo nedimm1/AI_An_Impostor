@@ -438,3 +438,25 @@ describe('voteResult', () => {
     });
   });
 });
+
+describe('swearing, on the way into the room', () => {
+  const answered = (text: string) =>
+    room(
+      play(seated(), { type: 'answerTurn', text, timedOut: false, replyToId: null })
+    ).transcript.at(-1)!.text;
+
+  it('stars an answer once, where every reader of it agrees', () => {
+    // Starred in the reducer rather than at render, so the bubble, the quote,
+    // the transcript, the log and the facts handed to the impostor are all
+    // the same string and there is no second place to forget.
+    expect(answered('fuck this game')).toBe('**** this game');
+  });
+
+  it('leaves an ordinary answer exactly as typed', () => {
+    expect(answered('pepperoni')).toBe('pepperoni');
+  });
+
+  it('does not star the football team', () => {
+    expect(answered('i support arsenal')).toBe('i support arsenal');
+  });
+});

@@ -36,6 +36,8 @@ const {
   bitFor,
   resolveBit,
   systemPrompt,
+  swearBack,
+  hasDegenerated,
 } = require('./impostor');
 
 const ROOM = [
@@ -1255,5 +1257,91 @@ describe('turning up in character', () => {
     // Silently ignoring this is how you spend an evening wondering why no
     // bit ever turns up.
     expect(() => bitFor('room')).toThrow(/is not a bit/);
+  });
+});
+
+describe('swearing back at a room that is swearing', () => {
+  const sweary = { roomIsSwearing: true, inCharacter: false };
+
+  it('swaps an intensifier in place, so the sentence cannot come out wrong', () => {
+    // Appending was tried and removed: it produced "some are actually alright
+    // fucking hell", a complaint stapled to a sentence that was not one.
+    const swapped = Array.from({ length: 60 }, () =>
+      swearBack('some are actually alright', sweary)
+    );
+
+    expect(swapped).toContain('some are fucking alright');
+    // Never anything but the swap or the original.
+    for (const line of swapped) {
+      expect(['some are actually alright', 'some are fucking alright']).toContain(line);
+    }
+  });
+
+  it('leaves a message with nowhere to put one exactly as written', () => {
+    for (let i = 0; i < 60; i++) {
+      expect(swearBack('yeah exactly', sweary)).toBe('yeah exactly');
+    }
+  });
+
+  it('does nothing in a room that is not swearing', () => {
+    for (let i = 0; i < 60; i++) {
+      expect(swearBack('its really annoying', { roomIsSwearing: false, inCharacter: false })).toBe(
+        'its really annoying'
+      );
+    }
+  });
+
+  it('keeps out of the way of a bit, which has its own register', () => {
+    for (let i = 0; i < 60; i++) {
+      expect(swearBack('it is really quite disagreeable', { ...sweary, inCharacter: true })).toBe(
+        'it is really quite disagreeable'
+      );
+    }
+  });
+
+  it('leaves a message that already swears, in either form', () => {
+    for (const already of ['its really shit', 'wtf is this', 'annoying af']) {
+      for (let i = 0; i < 20; i++) expect(swearBack(already, sweary)).toBe(already);
+    }
+  });
+
+  it('does not touch a trailing intensifier, which has no word after it', () => {
+    for (let i = 0; i < 60; i++) {
+      expect(swearBack('the pay was bad, not really', sweary)).toBe('the pay was bad, not really');
+    }
+  });
+
+  it('never swaps a discourse marker wearing an intensifier\'s clothes', () => {
+    // Both of these were caught by reading output, not by thinking about it:
+    // "fucking i left after a month" and "yeah fucking you're not wrong".
+    for (const marker of ['so i left after a month', "yeah well you're not wrong"]) {
+      for (let i = 0; i < 40; i++) expect(swearBack(marker, sweary)).toBe(marker);
+    }
+  });
+});
+
+describe('a message that has come apart', () => {
+  it('catches a repetition loop', () => {
+    // One real turn came back as the word "our" ninety times, and max_tokens
+    // was happy to allow it.
+    expect(hasDegenerated('our '.repeat(90).trim())).toBe(true);
+    expect(hasDegenerated('yeah yeah yeah yeah yeah yeah')).toBe(true);
+  });
+
+  it('leaves short repetition alone, which is a person', () => {
+    expect(hasDegenerated('no no no')).toBe(false);
+    expect(hasDegenerated('yeah exactly')).toBe(false);
+  });
+
+  it('leaves ordinary messages alone, bits and mashing included', () => {
+    for (const fine of [
+      'nah you just had bad luck, some of them arent that bad if you like the people',
+      'i wike pawsta, uwu nyaaa owo',
+      'arr i be partial to pasta, brings me joy like a chest o rum',
+      'asljkdhaslkjd',
+      'haha no way, that is actually so funny, i cannot believe you said that',
+    ]) {
+      expect(hasDegenerated(fine)).toBe(false);
+    }
   });
 });

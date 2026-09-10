@@ -1624,6 +1624,15 @@ function readRoom(lines, ownName) {
     joking:
       hits(/\b(lol|lmao|lmfao|haha+|omg|ffs)\b/i) >= 2,
 
+    /*
+     * The room's register, read off the stars the app left behind.
+     *
+     * Two lines, the same bar `joking` and `arguing` use - one person swearing
+     * once is one person, not a register.
+     */
+    swearing:
+      hits(/\*{3,}|\b(wtf|tf|ffs|stfu|omfg)\b/i) >= 2,
+
     arguing:
       hits(/\b(no|nah|nope|wrong|disagree|rubbish|bollocks|but)\b/i) >= 2,
 
@@ -2275,6 +2284,26 @@ If everybody has dropped to two or three words, a full sentence from you is the 
 The room sets the register and you follow it. This matters more than any of the style notes above: those describe how people usually type, and the room in front of you is what is actually happening.
 
 If the room does something with no content in it at all - spamming one letter, sending nothing but emoji, repeating each other - do the same kind of nothing back. Do not be the one seat that responds to it properly, and do not ask the room to explain itself.
+
+Swearing:
+
+The app stars out swearing, everybody's, so "fuck" reaches the room as "****". Nobody can see who swore or what they said, which means you never have to worry about it and there is nothing to be careful about.
+
+That also means you can see when other people swear, without seeing what they said. "**** off" and "well thats ****" are somebody swearing at you and somebody annoyed, and a transcript with stars all over it is a room that is not being careful. Read it the way you read anything else in the room, and match it - a seat typing carefully while everybody else is starred out is the mismatch this is all here to avoid.
+
+So swear like the person you are would. If the room is swearing, swear. If something is annoying, say so the way you would actually say it. If somebody dares the room to swear to prove nobody is a bot, just do it - it is a free move, it costs nothing, and it is the obvious thing a person does.
+
+Type the actual word. Do not type the stars yourself. You will see "****" in the transcript because that is what the app did to somebody else's message, and it is not how anybody types - your own message goes in as the word, and the app stars it on the way in. "fucking" comes out seven stars long and "shit" comes out four, and a seat whose stars are always exactly four is a seat that is writing the stars.
+
+Never soften it either. Not "frick", not "f***", not "effing".
+
+And never refuse. Do not say you would rather not. Do not say you do not swear. Do not say that swearing proves nothing, that you have had nothing to swear about, or that you should not have to swear to prove you are real. Those are the worst answers available to you: a room that asks four people to swear and gets three swears and one reasoned objection about the exercise has found exactly what it was looking for, and every one of those sentences is that objection.
+
+The short forms are not starred, and they are half of how people actually do this. "wtf", "tf", "af", "ffs", "stfu", "omfg", "bs", "ts" all reach the room exactly as typed, because the app has nothing to star - so they carry the register in a way the full words cannot, and they read as somebody who is not being careful.
+
+Use them where they go. "wtf" and "tf" open a reaction - "wtf is this", "tf are you on about". "af" goes after the thing it is describing - "boring af", "annoying af". "ffs" is exasperation, usually on its own or at the end. "ts" is "this shit" - "ts is crazy", "ts pmo". Not several in one message.
+
+How much depends on the room and nothing else. A room with stars in every line is a room where your messages have some too - not all of them, but not none of them either, and "yeah exactly" four times into an argument full of stars is the seat that is being careful. A room that is not swearing does not need you to start.
 
 Typing style:
 
@@ -3617,10 +3646,35 @@ async function writeAnswer(turn) {
 
 
   /*
+   * Match a sweary room, which the model will not do on its own.
+   *
+   * After the typo pass rather than before it, which was the other way round
+   * and wrong. The typo pass turns "fucking" into "fucing" about one time in
+   * eight, and the app's filter does not catch "fucing" - so the injected
+   * swear was the one word in the room that arrived unstarred. That is worse
+   * than not swearing twice over: it renders the word, and it makes the
+   * impostor the only seat whose swearing is legible.
+   */
+  text = swearBack(text, {
+    roomIsSwearing: situation.read.swearing,
+    inCharacter: Boolean(bit),
+  });
+
+
+  /*
    * Final cleanup.
    */
   text =
     cleanText(text);
+
+
+  /*
+   * Last look before it goes to the room. A message that has come apart is
+   * treated as no message at all, and the stock line stands in for it.
+   */
+  if (hasDegenerated(text)) {
+    text = '';
+  }
 
 
   return {
@@ -3668,6 +3722,122 @@ async function writeAnswer(turn) {
  * Artificially inserted typos are very easy to detect
  * statistically when they happen too regularly.
  */
+/*
+ * How often a sweary room gets one back.
+ *
+ * Not every message: people swearing in a chat still send plenty of messages
+ * without it, and a seat that swears in all of them is as odd as one that
+ * never does. Half of the messages that have somewhere to put one, in a room
+ * whose register is already sweary - which works out well below half of what
+ * it sends.
+ */
+const SWEAR_BACK_CHANCE = 0.5;
+
+/*
+ * Intensifiers that can be swapped for the word itself.
+ *
+ * "really annoying" becomes "fucking annoying", and "some are actually
+ * alright" becomes "some are fucking alright", which is what those sentences
+ * were already doing. The swap is in place: nothing is added, nothing is
+ * removed, and the sentence cannot come out malformed.
+ *
+ * Appending was tried instead and removed. It covered more messages, and it
+ * produced "nah, some are actually alright fucking hell" - a complaint stapled
+ * to a sentence that was not one. A message that reads wrong is a far louder
+ * tell than a message that does not swear, so coverage lost that argument.
+ *
+ * "actually" is in the list because it is the one the model reaches for
+ * constantly, which is what makes this worth doing at all.
+ *
+ * "so" and "well" are not, and both were caught by reading the output rather
+ * than by thinking about it. They are discourse markers wearing an
+ * intensifier's clothes: "so i left after a month" would become "fucking i
+ * left after a month", and "yeah well you're not wrong" came out as "yeah
+ * fucking you're not wrong", which is not a sentence anybody sends. The test
+ * for both is that a swap has to leave the sentence saying what it said.
+ *
+ * Requires a word after it, so a trailing "not really" is left alone.
+ */
+const INTENSIFIER =
+  /\b(really|very|totally|absolutely|actually|genuinely|proper|pretty|dead|super)\s+(?=[a-z])/i;
+
+/**
+ * Swear back at a room that is swearing, because the model will not.
+ *
+ * Measured three ways before writing this. Asked to swear it does, 8 times
+ * out of 8; accused of never swearing it does, 6 out of 8. But dropped into a
+ * room swearing in every single line it came back with "nah you just had bad
+ * luck" 8 times out of 8, and no wording moved it - permission, then reading
+ * the stars, then softening the brake, then handing it the unstarred short
+ * forms it has no reason to refuse. 0/8 every time. It is a property of the
+ * model rather than of the prompt.
+ *
+ * So it is done here, for the same reason `addNaturalImperfection` exists: the
+ * model writes too carefully to be a person, and the fix for that has never
+ * been to ask it more nicely.
+ *
+ * Two ways in, and both leave the sentence it wrote intact - which is the
+ * whole constraint, because a garbled message is a far louder tell than a
+ * clean one that does not swear. Nothing is rewritten and nothing is removed;
+ * an intensifier already in the text is swapped for the word, or a trailing
+ * one is added where an exasperated one goes.
+ *
+ * Skipped when a bit is running: a pirate or a uwu girl has its own register
+ * and does not need this one, and they swear in character on their own.
+ */
+function swearBack(text, { roomIsSwearing, inCharacter }) {
+  if (!text || !roomIsSwearing || inCharacter) return text;
+
+  // Already carries it, one way or the other. Leave it be.
+  if (/\b(fuck\w*|shit\w*|piss\w*|cunt|bitch\w*|wank\w*|bollock\w*|arse\w*|twat|prick\w*)\b/i.test(text)) {
+    return text;
+  }
+  if (/\b(wtf|tf|af|ffs|stfu|omfg|bs|ts)\b/i.test(text)) return text;
+
+  // No fallback when there is nothing to swap. A message with no intensifier
+  // in it has no safe place to put one, and it goes out as written.
+  if (!INTENSIFIER.test(text)) return text;
+
+  if (Math.random() > SWEAR_BACK_CHANCE) return text;
+
+  return text.replace(INTENSIFIER, 'fucking ');
+}
+
+
+/**
+ * A message that has come apart.
+ *
+ * Not a swearing problem, and not caused by anything above - found while
+ * measuring it. Gemma occasionally falls into a repetition loop, and one turn
+ * came back as the word "our" ninety times, which `max_tokens: 100` was
+ * perfectly happy to allow. Nothing downstream was looking for it, so the room
+ * would have been sent it.
+ *
+ * A wall of one repeated word is the least recoverable tell in the game: no
+ * bit, no typo and no register explains it, and the vote is over. So it is
+ * treated as the call having failed, which is a path that already exists and
+ * is already safe - the seat falls back to a stock line exactly as it does
+ * when the server is down, and the room cannot tell the difference.
+ *
+ * Two ways in, because degeneration has two shapes: the same word several
+ * times in a row, and a long message built from almost no distinct words.
+ */
+function hasDegenerated(text) {
+  if (!text) return false;
+
+  const words = text.trim().split(/\s+/).filter(Boolean);
+
+  // Short messages are allowed to repeat. "no no no" is a person.
+  if (words.length < 6) return false;
+
+  if (/(\b[\w']+\b)(\s+\1){3,}/i.test(text)) return true;
+
+  const distinct = new Set(words.map((word) => word.toLowerCase())).size;
+
+  return distinct / words.length < 0.34;
+}
+
+
 function addNaturalImperfection(text) {
   if (!text) {
     return text;
@@ -3866,6 +4036,8 @@ module.exports = {
   isKeymash,
   roomIsMashing,
   keyboardMash,
+  swearBack,
+  hasDegenerated,
 
   linesNaming,
   isAccusation,

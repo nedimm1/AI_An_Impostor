@@ -9,6 +9,7 @@
  * than this file.
  */
 
+import { censor } from './censor';
 import { makeId, shuffledPrompts } from './mock';
 import { IMPOSTOR_NAME, TEST_MODE } from './testing';
 import {
@@ -262,7 +263,9 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
           kind: 'answer' as const,
           playerId: speakerId,
           round: room.round,
-          text: action.text.trim(),
+          // Starred here and nowhere else, so the room only ever holds the
+          // starred text and every reader of it agrees.
+          text: censor(action.text.trim()),
           timedOut: action.timedOut,
           inTiebreaker: room.tiebreaker !== null,
           replyToId,
