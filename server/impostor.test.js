@@ -29,6 +29,9 @@ const {
   roomNote,
   shapeNote,
   pickCounterTarget,
+  isKeymash,
+  roomIsMashing,
+  keyboardMash,
 } = require('./impostor');
 
 const ROOM = [
@@ -1028,5 +1031,94 @@ describe('under sustained accusation', () => {
     expect(content).toContain('You have already said this much in this round');
     expect(content).toContain('- dc for me');
     expect(content).toContain('Do not make a point you have already made');
+  });
+});
+
+describe('when the room stops typing words', () => {
+  const mash = (text) => ({ name: 'Nedim', text, replyToName: null });
+
+  it('reads a hand on the keyboard as not words', () => {
+    for (const line of [
+      'asljkdhaslkjd',
+      'sdkfjhsdkf',
+      'asdasdasd',
+      'lkjhgfdsa',
+      'qwertyuiop',
+      'fdsafdsafdsa',
+    ]) {
+      expect(isKeymash(line)).toBe(true);
+    }
+  });
+
+  it('leaves noise people actually mean alone', () => {
+    // Each of these has a sense to it, and answering one with a fistful of
+    // consonants is a non sequitur rather than a match.
+    for (const line of ['aaaaaa', 'hahahaha', 'hmmmm', 'ffs', 'lol same', 'omg']) {
+      expect(isKeymash(line)).toBe(false);
+    }
+  });
+
+  it('leaves ordinary chat alone', () => {
+    for (const line of [
+      'pineapple',
+      'nah thats not it',
+      'attack on titan',
+      'the ending was kinda disappointing ngl',
+      'i only got through s1 tbh',
+      'pepperoni, keep it simple tbh',
+    ]) {
+      expect(isKeymash(line)).toBe(false);
+    }
+  });
+
+  it('does not mash back at one person having a moment', () => {
+    // The room is still answering the question. A seat that mashes into that
+    // has made itself the odd one out from the other direction.
+    expect(
+      roomIsMashing(
+        [mash('asljkdhaslkjd'), mash('pineapple'), mash('yeah exactly')],
+        'AI'
+      )
+    ).toBe(false);
+  });
+
+  it('mashes back once the room is doing it', () => {
+    expect(
+      roomIsMashing([mash('asljkdhaslkjd'), mash('sdkfjhsdkf')], 'AI')
+    ).toBe(true);
+  });
+
+  it('does not count its own mashing as the room mashing', () => {
+    expect(
+      roomIsMashing(
+        [
+          { name: 'AI', text: 'asljkdhaslkjd', replyToName: null },
+          { name: 'AI', text: 'sdkfjhsdkf', replyToName: null },
+        ],
+        'AI'
+      )
+    ).toBe(false);
+  });
+
+  it('writes something that reads as a hand rather than a password', () => {
+    // The generator is judged by its own detector: a mash that does not look
+    // like one to `isKeymash` does not look like one to the room either.
+    const sample = Array.from({ length: 400 }, () => keyboardMash());
+    const passing = sample.filter(isKeymash).length;
+
+    expect(passing / sample.length).toBeGreaterThan(0.9);
+
+    // Vowels are what make a random string read as a word. A hand resting on
+    // the home row barely finds any.
+    const vowelShare =
+      sample.reduce(
+        (total, line) => total + (line.match(/[aeiou]/g) ?? []).length / line.length,
+        0
+      ) / sample.length;
+
+    expect(vowelShare).toBeLessThan(0.2);
+
+    // And it never comes out as a held key.
+    for (const line of sample) expect(line).not.toMatch(/(.)\1{3,}/);
   });
 });

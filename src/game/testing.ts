@@ -23,7 +23,17 @@
  * changed in one of the four places that check `TEST_MODE`. Off, the game is
  * byte for byte what it was.
  *
- *   EXPO_PUBLIC_TEST_MODE=1 EXPO_PUBLIC_IMPOSTOR_URL=http://10.0.2.2:8787 npx expo start --android
+ * Start `npm run impostor:server` first, then the app with the harness on:
+ *
+ *   npm run ios:test        # EXPO_PUBLIC_IMPOSTOR_URL=http://localhost:8787
+ *   npm run android:test    # EXPO_PUBLIC_IMPOSTOR_URL=http://10.0.2.2:8787
+ *
+ * The two differ only in how the emulator reaches the host: `10.0.2.2` is the
+ * Android emulator's alias for it and does not resolve on the iOS simulator,
+ * which sees the host as `localhost`. Getting that wrong is quiet rather than
+ * loud — the impostor just falls back to a stock line, exactly as it would if
+ * the server were down — so it is worth using the scripts rather than typing
+ * the URL from memory.
  */
 
 /**

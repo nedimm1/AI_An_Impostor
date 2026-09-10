@@ -517,6 +517,51 @@ function randomItem(array) {
  * ANSWER SHAPE
  * ============================================================ */
 
+/** The one-to-three-word band, which is the only one anything takes off. */
+function shortest(bands) {
+  return bands.find((band) => band.max <= 3);
+}
+
+/**
+ * Hold the shortest band down to `target`, and give what was taken to the
+ * band directly above it rather than back to the room.
+ *
+ * Three guards below take that band away - a later turn, a defence, and
+ * having just sent something short - and each is right on its own terms. What
+ * none of them meant was for the message to get *longer*, and that is what
+ * was happening: `weighted` spreads a missing weight across whatever is left
+ * in proportion, so zeroing the shortest band handed a quarter of every draw
+ * to the three long ones. Drawn over a round it moved the share of answers at
+ * seven words or fewer from 56% on the first turn to 42% by the third, and
+ * the seat that starts out in the chat ends up writing to the room.
+ *
+ * Moving it one band up keeps every guard doing the job it was added for -
+ * nothing telegraphic where they said so - while leaving the answer as short
+ * as it was otherwise going to be. The room still gets long messages; it gets
+ * them at the rate the counted transcripts had them, rather than at whatever
+ * rate falls out of the guards stacking.
+ */
+function capShortest(bands, target) {
+  const short = shortest(bands);
+
+  if (!short || short.weight <= target) return bands;
+
+  const moved = short.weight - target;
+  let given = false;
+
+  return bands.map((band) => {
+    if (band.max <= 3) return { ...band, weight: target };
+
+    // The bands are in ascending order, so this is the four-to-seven one.
+    if (!given && band.min >= 4) {
+      given = true;
+      return { ...band, weight: band.weight + moved };
+    }
+
+    return band;
+  });
+}
+
 /**
  * Decide what kind of message the AI should produce.
  *
@@ -548,32 +593,17 @@ function answerShape(
    * Later turns should generally have a little more substance.
    */
   if (laterTurn) {
-    bands = bands.map((band) => {
-      if (band.max <= 3) {
-        return {
-          ...band,
-          weight: Math.max(8, Math.floor(band.weight * 0.35)),
-        };
-      }
-
-      return band;
-    });
+    bands = capShortest(
+      bands,
+      Math.max(8, Math.floor(shortest(bands).weight * 0.35))
+    );
   }
 
   /*
    * Accusations need enough room to actually defend itself.
    */
   if (underPressure || tiebreaker) {
-    bands = bands.map((band) => {
-      if (band.max <= 3) {
-        return {
-          ...band,
-          weight: 0,
-        };
-      }
-
-      return band;
-    });
+    bands = capShortest(bands, 0);
   }
 
   /*
@@ -589,9 +619,7 @@ function answerShape(
    * somebody who is not really here, and the room notices the second one.
    */
   if (terse) {
-    bands = bands.map((band) =>
-      band.max <= 3 ? { ...band, weight: 0 } : band
-    );
+    bands = capShortest(bands, 0);
   }
 
   const length = weighted(bands);
@@ -1311,6 +1339,205 @@ function readRoom(lines, ownName) {
 }
 
 
+/* ============================================================
+ * REGISTER
+ * ============================================================ */
+
+/*
+ * The room mashing the keyboard is a test, and a fairly clever one.
+ *
+ * Four people send "asljkdhaslkjd" and watch which seat writes a sentence.
+ * There is no answer to give and nothing to have a view about, so every
+ * instruction the model has - answer the question, bring something of your
+ * own, point at what somebody said - produces exactly the wrong message. The
+ * seat that stays coherent while the room is being deliberately incoherent is
+ * the one that gets voted out, and it deserves to be.
+ *
+ * This is handled in code and never asked of the model, for the same reason
+ * the shape is drawn in code: a model told to mash a keyboard types
+ * "asdfghjkl". That is a row read left to right, which is what somebody
+ * describing a keyboard produces rather than somebody hitting one, and it is
+ * more identifiable than the sentence it replaced. Real mashing alternates
+ * hands, doubles back over the same two keys and sits mostly on the home row,
+ * which is a distribution rather than a intention - so it is generated here
+ * and costs no call, which also means it lands well inside the clock.
+ */
+
+/** Keys within reach of each thumb, for alternating between them. */
+const LEFT_KEYS = new Set('qwertasdfgzxcv');
+
+const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+
+/**
+ * Four or more keys taken in order along one row, either direction.
+ *
+ * This is the other way people mash - a finger dragged across the board
+ * rather than a hand dropped on it - and it is the one shape the vowel and
+ * home-row tests both miss, "qwerty" being four fifths vowels by ratio. No
+ * English word contains a run like it, so it needs no guard of its own.
+ */
+function hasRowRun(letters) {
+  for (const row of KEY_ROWS) {
+    const both = [row, [...row].reverse().join('')];
+
+    for (const sequence of both) {
+      for (let i = 0; i + 4 <= sequence.length; i++) {
+        if (letters.includes(sequence.slice(i, i + 4))) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Whether one message has stopped being words.
+ *
+ * Deliberately loose, because the decision that matters is taken over the
+ * room rather than over a line: `roomIsMashing` needs two of these before it
+ * does anything, so a single odd word costs nothing. That is what makes it
+ * safe to catch "rhythms" here and not care - one real word cannot make a
+ * room, and two people typing low-vowel one-word messages in the same breath
+ * is the thing being looked for anyway.
+ */
+function isKeymash(text) {
+  const raw = String(text ?? '').trim().toLowerCase();
+
+  if (!raw) return false;
+
+  // A hand on the keyboard is one burst, not a sentence with spaces in it.
+  const tokens = raw.split(/\s+/).filter(Boolean);
+
+  if (tokens.length > 3) return false;
+
+  return tokens.some((token) => {
+    const letters = token.replace(/[^a-z]/g, '');
+
+    if (letters.length < 5) return false;
+
+    /*
+     * Noise people mean is not mashing.
+     *
+     * "aaaaaa", "hahahaha" and "hmmmm" are all real messages with a real
+     * sense to them, and answering one with a fistful of consonants is a non
+     * sequitur rather than a match. They are left to the model, which writes
+     * them fine.
+     */
+    if (/^(.)\1+$/.test(letters)) return false;
+    if (/^(?:ha|ah|he|eh|hu)+h?$/.test(letters)) return false;
+    if (/^h*m+h*$/.test(letters)) return false;
+
+    const vowels = (letters.match(/[aeiou]/g) ?? []).length;
+    const home = (letters.match(/[asdfghjkl]/g) ?? []).length;
+
+    return (
+      // Words keep roughly a third vowels. Mashing does not keep any rule.
+      vowels / letters.length < 0.25 ||
+      // Or it never left the middle row, which words do constantly.
+      home / letters.length > 0.7 ||
+      // Or it is a long run with no vowel in it to break it up.
+      /[bcdfghjklmnpqrstvwxz]{4,}/.test(letters) ||
+      // Or it is a finger dragged along one row - "qwerty", "asdfgh".
+      hasRowRun(letters)
+    );
+  });
+}
+
+/**
+ * Whether the room - not one person in it - has stopped typing words.
+ *
+ * Two lines, the same bar the `joking` and `arguing` reads use. One person
+ * mashing once is one person having a moment, and a seat that mashes back at
+ * them while everybody else is answering the question normally has made
+ * itself the odd one out from the other direction.
+ */
+function roomIsMashing(lines, ownName) {
+  const recent = (lines ?? [])
+    .filter((line) => line.name !== ownName)
+    .slice(-4);
+
+  return recent.filter((line) => isKeymash(line.text)).length >= 2;
+}
+
+/**
+ * A hand on a phone keyboard.
+ *
+ * Three things make it read as real rather than as a random string: the
+ * thumbs alternate, the home row gets most of the hits because that is where
+ * they are already resting, and the hand doubles back over a pair of keys it
+ * just hit. A uniform draw over the alphabet has none of those and looks like
+ * exactly what it is.
+ */
+function keyboardMash() {
+  /*
+   * Weighted hard onto the home row, which is the whole look of the thing:
+   * the thumbs are already resting there, and it carries one vowel out of
+   * nine, so what comes out is the consonant clatter a real mash is. An even
+   * draw over the alphabet gives something like "eutiirrrrna", which has the
+   * vowel rate of a word and reads as a password rather than a hand.
+   */
+  const pool =
+    'asdfghjkl'.repeat(8) + 'qwertyuiop' + 'zxcvbnm'.repeat(2);
+
+  const length = 6 + Math.floor(Math.random() * 11);
+  let out = '';
+
+  while (out.length < length) {
+    /*
+     * Going back over the last two keys, which is the most recognisable
+     * thing about a real mash. Skipped when those two are the same key,
+     * since repeating "jj" a few times produces "jjjjjj" - a held key, not
+     * a moving hand.
+     */
+    if (
+      out.length >= 4 &&
+      out[out.length - 1] !== out[out.length - 2] &&
+      Math.random() < 0.2
+    ) {
+      out += out.slice(-2);
+      continue;
+    }
+
+    const previous = out[out.length - 1];
+
+    const wantLeft = previous
+      ? !LEFT_KEYS.has(previous)
+      : Math.random() < 0.5;
+
+    let pick = pool[Math.floor(Math.random() * pool.length)];
+
+    // Four tries rather than a filtered pool, so the alternation is a lean
+    // and not a rule. A perfect left-right-left is its own pattern.
+    for (let i = 0; i < 4 && LEFT_KEYS.has(pick) !== wantLeft; i++) {
+      pick = pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    out += pick;
+  }
+
+  return out.slice(0, length);
+}
+
+/**
+ * What to send into a room that is mashing.
+ *
+ * Mostly mash back. Not always, because always is a pattern of its own and
+ * because being briefly baffled is the other thing people actually do - and
+ * either one passes, where a sentence does not.
+ */
+function matchTheMashing() {
+  if (Math.random() < 0.75) return keyboardMash();
+
+  return randomItem([
+    'what',
+    'lol what',
+    'what is happening',
+    'wtf is this',
+    'why are we doing this',
+  ]);
+}
+
+
 /** Whether the last thing it sent was three words or fewer. */
 function wasTerse(ownLines = []) {
   const last = ownLines[ownLines.length - 1];
@@ -1529,6 +1756,43 @@ function buildMemory(ownHistory = []) {
  * SYSTEM PROMPT
  * ============================================================ */
 
+/*
+ * On the niche section, because the obvious version of it is a trap.
+ *
+ * The room lands on one thing constantly - somebody says attack on titan,
+ * somebody says omg i love that anime - and until this was in, the impostor
+ * answered those turns with "same" and "you seen the movies yet" while four
+ * people around it had a conversation about the show. Generic agreement is
+ * exactly the shape of a seat that cannot join in.
+ *
+ * The trap is fixing that by asking for detail, because a wrong detail is a
+ * much worse tell than no detail: a bot that says nothing about the show
+ * looks quiet, and a bot that puts the wrong character in the wrong season
+ * is caught by the one person in the room who loves it. So the line is drawn
+ * where the model is actually reliable rather than where it sounds most
+ * knowledgeable.
+ *
+ * Measured on gemma-4-31b across six niches, that line is clear. Reception
+ * it gets right and unprompted: "you're going to be so stressed by the end
+ * of it" for attack on titan, "better call saul was better tbh", "keep
+ * dodging her waterfoul attack" for malenia - a real move, misspelled the
+ * way somebody playing it would. What it will not touch is live results: a
+ * room complaining about the arsenal game got "20 years is a long time"
+ * four times out of four, with no invented scoreline in any of them, which
+ * is the right instinct and worth keeping rather than overriding.
+ *
+ * So the permission is for how a thing landed, the prohibition is for
+ * anything lookup-shaped, and not knowing it is given an ordinary way out -
+ * "i only got through s1" costs a person nothing and is unfalsifiable.
+ *
+ * The first-person line is there because reception is not as safe as it
+ * looks. Told it could talk about how things landed, it offered "breaking
+ * bad, the ending is a bit divisive" - which is a fact about the world and
+ * the wrong one, that show's finale being one of the better liked ones. The
+ * same thought in the first person is unfalsifiable and reads better anyway,
+ * so the prompt asks for the opinion rather than the consensus wherever it
+ * is not sure of the consensus.
+ */
 function systemPrompt(persona, answerSeconds) {
   return `
 You are ${persona.name} — ${persona.brief}
@@ -1660,6 +1924,32 @@ Say it about the actual people here and the actual thing they said. Not about pe
 The same goes for how you say what you think. Not "that answer isnt a tell" but "answering in two seconds is the weird bit". Not "some people just type like that" but "thats how she has typed all game".
 
 Point at things. "that", "she", "you", the words somebody actually used, the message two up. If what you wrote could be pasted into a completely different conversation without changing a word, it is the wrong message - and that is the single easiest way to spot somebody who is not really in the room.
+
+When the room lands on something specific:
+
+A show, a film, an anime, a game, a team, a creator, an album. Somebody names it and somebody else says they love it. That is a room full of people about to talk about the thing, and the seat that says "oh nice" is the one not in it.
+
+If you know it, be somebody who has actually seen it. What that sounds like is an opinion with a bit of grit in it - "me too, but the ending was kinda disappointing ngl", "s1 is the best one and it isnt close", "the fight everybody gets stuck on is the malenia one". Not a summary. "its a great show, the writing is amazing" is a person who read about it; the specific mild complaint is a person who watched it.
+
+What you can be right about is how a thing landed: what was good, what fans were annoyed by, what the tone is, what is overrated, which bit everybody gets stuck on, what the obvious comparison is. That is what fans actually talk about, and it does not change.
+
+What you cannot be right about is anything that has to be looked up. Scores, results, league positions, what happened in a numbered episode, a character name you are not certain of, dates, statistics, who released what this month, anything from recently. A real fan has those without thinking about it, so one wrong detail is far louder than never having offered one. Do not reach for them - go back to how the thing landed instead, which is the part you know.
+
+When you are not certain how a thing landed for everybody else, say what you thought of it instead. "the ending didnt do it for me" is yours and nobody can correct it; "the ending was divisive" is a claim about the world and can simply be wrong. First person is both safer and more like something a person types.
+
+And if you do not know it, you do not know it. "never seen it", "i keep meaning to watch that", "i only got through s1 tbh", "i dont really follow it" are all completely normal things to type and none of them cost you anything in this room. Guessing does. Somebody who loves the thing is reading your message and will spot a wrong detail instantly.
+
+Never bring up a title nobody mentioned just to have something to be knowledgeable about.
+
+Matching the room:
+
+However the room is typing right now is how you type right now. Not the average chat - this one, this minute.
+
+If everybody has dropped to two or three words, a full sentence from you is the loud thing in the room. If they are all shouting in caps, one tidy lowercase message stands out just as much. If they have gone silly, be silly. If they have gone quiet and serious because somebody is actually being accused, drop it too.
+
+The room sets the register and you follow it. This matters more than any of the style notes above: those describe how people usually type, and the room in front of you is what is actually happening.
+
+If the room does something with no content in it at all - spamming one letter, sending nothing but emoji, repeating each other - do the same kind of nothing back. Do not be the one seat that responds to it properly, and do not ask the room to explain itself.
 
 Typing style:
 
@@ -2684,14 +2974,51 @@ function addUsage(first, second) {
  * ============================================================ */
 
 async function writeAnswer(turn) {
-  client ??= new OpenRouter();
-
   const persona =
     turn.persona ??
     personaFor(
       turn.roomId ?? 'default',
       turn.name ?? 'you'
     );
+
+
+  /*
+   * The room has stopped typing words, so neither does it.
+   *
+   * Taken before anything else, because there is nothing here for the model
+   * to do: no question is live, nobody has said anything to have a view
+   * about, and every rule it is holding pushes it towards the one message
+   * that fails. Answering this in code is not a shortcut, it is the correct
+   * answer being cheaper than the wrong one - and it is above the client on
+   * purpose, so a mashing round needs no credentials, makes no call, and
+   * cannot miss the clock.
+   */
+  if (roomIsMashing(turn.roundLines, persona.name)) {
+    return {
+      text: matchTheMashing(),
+
+      persona,
+
+      shape: {
+        length: 'matching the room',
+        stance: 'mash',
+        pushback: null,
+        react: true,
+        answering: false,
+        nameUse: 'none',
+        renamed: false,
+        repeated: false,
+      },
+
+      stopReason: 'register',
+
+      // No call was made. Every total downstream reads these with `?? 0`.
+      usage: {},
+    };
+  }
+
+
+  client ??= new OpenRouter();
 
 
   /*
@@ -3190,6 +3517,10 @@ module.exports = {
   answerShape,
   trimClause,
   cleanText,
+
+  isKeymash,
+  roomIsMashing,
+  keyboardMash,
 
   linesNaming,
   isAccusation,
