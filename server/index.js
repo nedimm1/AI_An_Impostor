@@ -37,7 +37,7 @@ try {
   // No .env. The environment is expected to carry the key instead.
 }
 
-const { castVote, writeAnswer } = require('./impostor');
+const { castVote, writeAnswer, bitOverride } = require('./impostor');
 
 const PORT = Number(process.env.IMPOSTOR_PORT ?? 8787);
 
@@ -190,6 +190,9 @@ const server = http.createServer(async (req, res) => {
     // What it was drawn to do, next to what it wrote. Watching one without
     // the other tells you a line was off but never why.
     const drawn = [
+      // First, because it colours every other line in the match and is the
+      // one thing you want to know before reading them.
+      result.shape?.bit ? `BIT=${result.shape.bit}` : null,
       result.shape?.pushback ? `pushback=${result.shape.pushback}` : null,
       result.shape?.stance ? `stance=${result.shape.stance}` : null,
       result.shape?.nameUse ? `names=${result.shape.nameUse}` : null,
@@ -229,6 +232,20 @@ server.listen(PORT, () => {
   console.log(`  simulator        http://localhost:${PORT}`);
   console.log(`  device           http://${lanAddress()}:${PORT}   (same wifi)`);
   console.log(`\n  put that in EXPO_PUBLIC_IMPOSTOR_URL and start the app\n`);
+
+  /*
+   * Said out loud, because a cranked bit rate makes the impostor look far
+   * stranger than it ships as, and it is an easy thing to leave on.
+   */
+  const bits = bitOverride();
+
+  if (bits.forced) {
+    console.log(`  BIT OVERRIDE     every match is "${bits.forced.key}"\n`);
+  } else if (bits.oneIn !== 8) {
+    console.log(
+      `  BIT OVERRIDE     one match in ${bits.oneIn} is in character${bits.oneIn === 1 ? ' (all of them)' : ''}\n`
+    );
+  }
 });
 
 /** A session of play is a real cost measurement. Print it on the way out. */

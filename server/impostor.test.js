@@ -32,6 +32,10 @@ const {
   isKeymash,
   roomIsMashing,
   keyboardMash,
+  BITS,
+  bitFor,
+  resolveBit,
+  systemPrompt,
 } = require('./impostor');
 
 const ROOM = [
@@ -1120,5 +1124,136 @@ describe('when the room stops typing words', () => {
 
     // And it never comes out as a held key.
     for (const line of sample) expect(line).not.toMatch(/(.)\1{3,}/);
+  });
+});
+
+describe('turning up in character', () => {
+  /*
+   * The rate is overridable from the environment so it can be watched, which
+   * means a shell with the override still set would otherwise fail the rarity
+   * tests rather than the code being wrong.
+   */
+  const saved = {};
+
+  beforeEach(() => {
+    for (const key of ['IMPOSTOR_BIT', 'IMPOSTOR_BIT_ONE_IN']) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('is rare, because a bit every match teaches the room to hunt the odd seat', () => {
+    const rooms = Array.from({ length: 20000 }, (_, i) => `room_${i.toString(36)}`);
+    const rate = rooms.filter((room) => bitFor(room)).length / rooms.length;
+
+    expect(rate).toBeGreaterThan(0.08);
+    expect(rate).toBeLessThan(0.18);
+  });
+
+  it('is the same bit all match, since one that arrives in round two is a glitch', () => {
+    const room = Array.from({ length: 20000 }, (_, i) => `room_${i.toString(36)}`).find(
+      (candidate) => bitFor(candidate)
+    );
+
+    const drawn = Array.from({ length: 20 }, () => bitFor(room).key);
+
+    expect(new Set(drawn).size).toBe(1);
+  });
+
+  it('reaches every bit rather than favouring one', () => {
+    const rooms = Array.from({ length: 40000 }, (_, i) => `room_${i.toString(36)}_${i * 7919}`);
+    const drawn = new Set(rooms.map((room) => bitFor(room)?.key).filter(Boolean));
+
+    expect(drawn.size).toBe(BITS.length);
+  });
+
+  it('will not hand a character a two word turn to be one in', () => {
+    // Every flat line measured across the six bits came out of the shortest
+    // band. Two words cannot carry a voice, and a bit that lapses for one
+    // message is worse than no bit.
+    const drawn = Array.from({ length: 400 }, () =>
+      answerShape(true, { inCharacter: true })
+    );
+
+    expect(drawn.every((shape) => shape.words[1] > 3)).toBe(true);
+  });
+
+  it('gives the bits that frame an answer room for the frame', () => {
+    const drawn = Array.from({ length: 400 }, () =>
+      answerShape(true, { inCharacter: true, needsRoom: true })
+    );
+
+    expect(drawn.every((shape) => shape.words[1] > 7)).toBe(true);
+  });
+
+  it('leaves the length draw alone when there is no bit', () => {
+    const drawn = Array.from({ length: 600 }, () => answerShape(true, {}));
+
+    expect(drawn.some((shape) => shape.words[1] <= 3)).toBe(true);
+  });
+
+  it('tells the model to hold the bit under accusation and when asked to stop', () => {
+    for (const raw of BITS) {
+      // A bit whose note depends on the match has to be resolved first.
+      const bit = resolveBit(raw, 'room');
+      const prompt = systemPrompt({ name: 'AI', brief: 'x', traits: [] }, 40, bit);
+
+      expect(prompt).toContain(bit.note);
+      expect(prompt).toContain('including when you are accused');
+      expect(prompt).toContain('Never explain the bit');
+    }
+  });
+
+  it('says nothing about a bit when there is not one', () => {
+    const prompt = systemPrompt({ name: 'AI', brief: 'x', traits: [] }, 40, null);
+
+    expect(prompt).not.toContain('The bit:');
+  });
+
+  it('can be cranked up to watch it, and forced to one', () => {
+    process.env.IMPOSTOR_BIT_ONE_IN = '1';
+    expect(bitFor('any room at all')).not.toBeNull();
+
+    delete process.env.IMPOSTOR_BIT_ONE_IN;
+    process.env.IMPOSTOR_BIT = 'pirate';
+    expect(bitFor('any room at all').key).toBe('pirate');
+  });
+
+  it('keeps one star sign for the whole match', () => {
+    const astrology = BITS.find((bit) => bit.key === 'astrology');
+    const signOf = (note) => note.match(/You are a (\w+)/)?.[1];
+
+    // Answering as a taurus and then defending yourself as a pisces is the
+    // room catching you out, not the stars.
+    const held = Array.from({ length: 10 }, () =>
+      signOf(resolveBit(astrology, 'room_alpha').note)
+    );
+
+    expect(new Set(held).size).toBe(1);
+    expect(held[0]).toBeTruthy();
+
+    // And it is not the same sign for every room.
+    const across = new Set(
+      Array.from({ length: 200 }, (_, i) =>
+        signOf(resolveBit(astrology, `room_${i}`).note)
+      )
+    );
+
+    expect(across.size).toBeGreaterThan(6);
+  });
+
+  it('says so rather than playing it straight when the name is a typo', () => {
+    process.env.IMPOSTOR_BIT = 'anime girl';
+
+    // Silently ignoring this is how you spend an evening wondering why no
+    // bit ever turns up.
+    expect(() => bitFor('room')).toThrow(/is not a bit/);
   });
 });

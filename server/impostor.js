@@ -541,6 +541,40 @@ function shortest(bands) {
  * them at the rate the counted transcripts had them, rather than at whatever
  * rate falls out of the guards stacking.
  */
+/**
+ * Drop every band at or under `words` and hand the weight to the next one up.
+ *
+ * `capShortest` leans on the shortest band; this removes a floor outright,
+ * which only the bits need. Same principle either way - weight taken off the
+ * bottom goes up one step, never out into the long tail.
+ */
+function raiseFloor(bands, words) {
+  let moved = 0;
+
+  const raised = bands.map((band) => {
+    if (band.max > words) return band;
+
+    moved += band.weight;
+
+    return { ...band, weight: 0 };
+  });
+
+  if (moved === 0) return bands;
+
+  let given = false;
+
+  return raised.map((band) => {
+    if (band.max > words && !given) {
+      given = true;
+
+      return { ...band, weight: band.weight + moved };
+    }
+
+    return band;
+  });
+}
+
+
 function capShortest(bands, target) {
   const short = shortest(bands);
 
@@ -583,9 +617,48 @@ function answerShape(
     suspicion = false,
     piling = false,
     terse = false,
+    inCharacter = false,
+    needsRoom = false,
   } = {}
 ) {
   let bands = [...LENGTHS];
+
+
+  /*
+   * A character needs room to be one.
+   *
+   * Measured across the six bits, every line that came out flat came out of
+   * the shortest band: the conspiracy theorist answered "sushi", the
+   * commentator "nah you're wrong", the victorian gentleman defended himself
+   * with "sir". Two words cannot carry a voice, so the bit quietly switched
+   * off for that turn - which is the one thing a bit must never do, an eight
+   * message pirate who sends one plain message being more conspicuous than
+   * no pirate at all.
+   *
+   * The bits that survived a short draw were the ones whose marker is itself
+   * short - "arr", "uwu", "que?". Rather than write the other three around
+   * that, the band goes.
+   */
+  if (inCharacter) {
+    bands = raiseFloor(bands, 3);
+
+    /*
+     * Three of the bits are a frame around the answer rather than a way of
+     * saying it. "who benefits" fits in four words; narrating your own answer
+     * like a match, explaining who the data harvest serves, or getting your
+     * star sign into it does not - and on a short draw those three came out
+     * as "you just want it boring", "you just dont know sauces lol" and a
+     * bare "tacos", which is the bit off again.
+     *
+     * Astrology is here for the first turn especially. Cold room, nothing to
+     * react to, and the model answered the question and dropped the frame
+     * two times out of three - which is the worst message in the match to
+     * drop it on, being the one that establishes there is a bit at all.
+     */
+    if (needsRoom) {
+      bands = raiseFloor(bands, 7);
+    }
+  }
 
 
 
@@ -890,6 +963,243 @@ function personaFor(seed, name) {
     name,
     ...PERSONAS[index],
   };
+}
+
+
+/* ============================================================
+ * THE BIT
+ * ============================================================ */
+
+/*
+ * Occasionally it turns up doing a character, and keeps it all match.
+ *
+ * This exists because it is what the room does. A player who wants to prove
+ * they are not a bot has one reliable move - be far too strange to be one -
+ * and so rooms contain uwu girls, pirates, and people conducting the entire
+ * match in Spanish. Those seats are almost never voted out, because the
+ * suspicion in this game runs on "would a machine write that", and a machine
+ * plainly would not write "i wike pawsta uwu".
+ *
+ * Which is exactly why the impostor should get to do it. It is the strongest
+ * cover in the game and it was only available to the humans.
+ *
+ * Two things make it work rather than be a gimmick:
+ *
+ * It is drawn off the room id, so it is the same bit for the whole match. A
+ * character that arrives in round two is not a character, it is a glitch, and
+ * a player who was normal for ten messages and then started saying nyaa is
+ * the most suspicious thing in the room. Because the seed is the room, this
+ * needs no state and no plumbing - every turn of the match independently
+ * arrives at the same answer.
+ *
+ * And it is rare. Rare is the point: a bit is memorable, and an impostor that
+ * turns up in character every match teaches the room that the strange seat is
+ * the bot, which inverts the whole advantage. One match in eight.
+ */
+
+const BITS = [
+  {
+    key: 'uwu',
+    note: `You are doing the uwu anime girl bit, and you are committed to it.
+
+owo, uwu, nyaa, stretched vowels, w where r and l should be, asterisk actions, and the occasional soft threat. "i wike pawsta uwu", "*snuggles* dont bully me", "nyaaa youre so mean owo", "hewwo".
+
+You do not drop it when the room turns on you. Somebody doing this bit does it harder under pressure: "owo why is evewyone wooking at me", "im just a smol bean 🥺".`,
+  },
+  {
+    key: 'no-english',
+    note: `You are doing the bit where you barely speak English.
+
+Nearly everything in Spanish, with the handful of broken English words of somebody who has about ten of them. "que?", "no entiendo", "yo no soy el bot amigo", "porque me miras", "no no no", "si si", "tu eres el bot".
+
+You are still completely in the game. When somebody accuses you, argue back - in Spanish. When you think somebody is the impostor, say so - in Spanish. When the room asks why you do not speak English, "que?" is the answer.
+
+The joke is a player who is obviously following every word and answering in the wrong language. A seat that only ever types "que?" is not doing the bit, it is a dead seat, and the room votes it out in a minute.`,
+  },
+  {
+    key: 'pirate',
+    note: `You are doing the pirate bit, and you are committed to it.
+
+"arr", "aye", "ye", "matey", "lad", "lass", "me hearties", "scallywag", "walk the plank". Boats and rum turn up in answers that have nothing to do with either. "arr i be partial to a bit o pasta", "ye be talkin nonsense lad".
+
+You do not drop it when accused. You accuse back in it: "arr this one be the impostor, mark me words".`,
+  },
+  {
+    key: 'conspiracy',
+    needsRoom: true,
+    note: `You are doing the bit where everything is a psyop.
+
+Every question is a data harvest, every answer is compromised, the room is an experiment. "they want you to think its pepperoni", "this whole chat is a data harvest and youre all falling for it", "wake up", "who is funding this".
+
+Answer the questions, but always sideways and always with who benefits. When accused, that is simply proof: "of course you say its me, thats the whole point of the exercise".
+
+Never break and admit you are joking.`,
+  },
+  {
+    key: 'commentator',
+    needsRoom: true,
+    note: `You are doing the bit where you commentate the room like a match.
+
+Third person, present tense, breathless. "and pineapple goes in early, bold from the young debutant", "hes stumbling here, hes got nothing", "OH and the accusation comes in".
+
+You still answer the questions, you just call your own answer like it is a play. When accused, commentate the accusation as it happens: "the crowd turns on him, what a moment".`,
+  },
+  {
+    key: 'brainrot',
+    note: `You are doing the bit where you talk entirely in gen alpha slang.
+
+"fire", "no cap", "ngl", "lowkey", "highkey", "its giving", "mid", "cooked", "rizz", "aura", "sigma", "diabolical", "the way you", "bro really said". "pasta is so fire ngl", "thats giving broke", "pineapple is mid at best".
+
+It is how you talk, not a word list to get through. One or two of them in a message, not six - somebody stacking every slang word they know is doing an impression of the bit rather than the bit.
+
+You accuse in it and you defend in it: "youre lowkey cooked", "the way you typed that is diabolical", "zero rizz detected in that answer", "nah im not the bot, thats crazy work".`,
+  },
+  {
+    key: 'astrology',
+    needsRoom: true,
+    note: (seed) => {
+      const [sign, trait] = SIGNS[hashOf(`sign:${seed}`) % SIGNS.length];
+
+      return `You are doing the bit where everything is astrology.
+
+You are a ${sign} - ${trait} - and you say so. That is your sign for the whole match and it does not change: somebody who answers as a taurus and then defends themselves as a pisces has been caught out by the room, not by the stars.
+
+Everybody's answer is their star sign's fault, the room's mood is planetary, and you ask people what they are. "thats such a taurus answer", "whats your sign, this explains everything", "mercury retrograde has this room in a chokehold", "im a ${sign} so i cant help it".
+
+Get the signs right, because somebody who is actually into this does. Aries loud and first, taurus stubborn and food-motivated, gemini two-faced, cancer emotional, leo attention, virgo fussy and critical, libra cannot decide, scorpio intense and secretive, sagittarius restless, capricorn joyless and working, aquarius contrary and detached, pisces dreamy and sensitive. Putting the wrong trait on a sign is the one thing that would give you away here.
+
+Your own answers come with your sign on them - "sushi, very ${sign} of me", "pasta, im a ${sign}, that explains it". A bare answer with no astrology in it is the bit switched off, and the first message of the match is the one that sets it up.
+
+If you are not sure which sign fits how somebody is behaving, ask them what they are instead - "wait whats your sign", "this is making sense now, what are you". That is in character, it is the thing these conversations actually consist of, and it cannot be wrong.
+
+This is the best accusing voice in the room and you should use it: "scorpios always deflect like that", "thats not a person thats a virgo checklist", "the energy coming off you is not human i fear".`;
+    },
+  },
+  {
+    key: 'victorian',
+    note: `You are doing the bit where you type like a letter from 1880.
+
+Ornate, archaic, absurdly polite, faintly wounded. "I must confess a particular fondness for pasta." "I dare say the pineapple is an abomination." "Sir, I find the accusation most disagreeable."
+
+Full sentences, capital letters and full stops - which for this bit only is correct, and overrides the lowercase typing rules.
+
+Archaic, not corporate. "I dare say" and "most disagreeable" are the bit; "I appreciate your perspective" is not - that is an assistant, and it is the one thing that would actually get you voted out.`,
+  },
+];
+
+const SIGNS = [
+  ['aries', 'loud and first into everything'],
+  ['taurus', 'stubborn and permanently food-motivated'],
+  ['gemini', 'two-faced, allegedly'],
+  ['cancer', 'emotional about everything'],
+  ['leo', 'needs the attention'],
+  ['virgo', 'fussy and critical'],
+  ['libra', 'cannot make a decision'],
+  ['scorpio', 'intense and secretive'],
+  ['sagittarius', 'restless, never in one place'],
+  ['capricorn', 'joyless and always working'],
+  ['aquarius', 'contrary and a bit detached'],
+  ['pisces', 'dreamy and far too sensitive'],
+];
+
+function hashOf(text) {
+  let hash = 0;
+
+  for (const char of String(text)) {
+    hash =
+      (hash * 131 + char.charCodeAt(0)) |
+      0;
+  }
+
+  return Math.abs(hash);
+}
+
+/**
+ * A bit whose note depends on the match, resolved against the room.
+ *
+ * Only astrology needs it so far, and it needs it badly: the sign was being
+ * invented per message, so it answered as a taurus in round one and defended
+ * itself as a pisces in round two. Claiming two star signs in one match is
+ * precisely the inconsistency that gets a seat voted out, and it is the kind
+ * of thing this room is watching for.
+ *
+ * Drawn off the room like everything else, so it holds all match with nothing
+ * carried between turns.
+ */
+function resolveBit(bit, seed) {
+  if (!bit || typeof bit.note !== 'function') return bit;
+
+  return { ...bit, note: bit.note(seed) };
+}
+
+
+/*
+ * One match in eight, and a different draw from the persona.
+ *
+ * Salted so the two hashes do not move together - the same room picking both
+ * the same background and the same bit makes the pair predictable, and half
+ * the point of the persona is that the room cannot learn it.
+ */
+const BIT_ONE_IN = 8;
+
+/*
+ * Both overrides exist to watch the thing work, which at one match in eight
+ * is otherwise a lot of matches.
+ *
+ *   IMPOSTOR_BIT_ONE_IN=1     every match is in character
+ *   IMPOSTOR_BIT=uwu          every match is that one
+ *
+ * Read per call rather than at load, so they can be changed without a
+ * restart, and off the plain environment rather than `EXPO_PUBLIC_` because
+ * this is the server: nothing here is inlined into a bundle, and a shipped
+ * app cannot be talked into either of them. The startup banner says when one
+ * is on, since a cranked rate is easy to leave on by accident and makes the
+ * impostor look far stranger than it is.
+ */
+function bitOverride() {
+  const forced = process.env.IMPOSTOR_BIT ?? '';
+
+  const rate = Number(process.env.IMPOSTOR_BIT_ONE_IN);
+
+  return {
+    forced: forced ? (BITS.find((bit) => bit.key === forced) ?? null) : null,
+    named: forced,
+    oneIn:
+      Number.isFinite(rate) && rate >= 1
+        ? Math.floor(rate)
+        : BIT_ONE_IN,
+  };
+}
+
+function bitFor(seed) {
+  const override = bitOverride();
+
+  // A name that matches nothing is a typo, and silently playing it straight
+  // is how you spend an evening wondering why no bit ever turns up.
+  if (override.named && !override.forced) {
+    throw new Error(
+      `IMPOSTOR_BIT="${override.named}" is not a bit. Try one of: ${BITS.map((bit) => bit.key).join(', ')}`
+    );
+  }
+
+  if (override.forced) return resolveBit(override.forced, seed);
+
+  let hash = 0;
+
+  for (const char of `bit:${seed}`) {
+    hash =
+      (hash * 131 + char.charCodeAt(0)) |
+      0;
+  }
+
+  const roll = Math.abs(hash);
+
+  if (roll % override.oneIn !== 0) return null;
+
+  return resolveBit(
+    BITS[Math.floor(roll / override.oneIn) % BITS.length],
+    seed
+  );
 }
 
 
@@ -1793,9 +2103,24 @@ function buildMemory(ownHistory = []) {
  * so the prompt asks for the opinion rather than the consensus wherever it
  * is not sure of the consensus.
  */
-function systemPrompt(persona, answerSeconds) {
+function systemPrompt(persona, answerSeconds, bit = null) {
   return `
 You are ${persona.name} — ${persona.brief}
+${bit ? `
+The bit:
+
+${bit.note}
+
+This is a bit you are doing, not who you are. Underneath it you are still ${persona.name}, still playing properly, still reading the room, still voting for who you think it is. The character is the voice; everything else about how you play is unchanged.
+
+Two rules below are overridden by this and only by this. The typing style notes describe how people normally type, and your bit is how you type. "Do not perform" means do not perform being human - performing a character is the opposite, it is the most human thing in the room, and it is the reason you are doing it.
+
+Follow it in every single message, including the first one, including when you are accused, including when the room gets annoyed and asks you to stop. A bit that lapses for one message is worse than no bit: somebody who was a pirate for eight messages and then typed a normal sentence is the most conspicuous seat in the game.
+
+It applies to replies too. The reply rules further down say how to aim a message - do not restate it, do not name them - and they do not say what voice to say it in. Answering somebody directly is still done in character.
+
+Never explain the bit. Never announce it. Never step outside it to say you are joking. You are just somebody who types like this.
+` : ''}
 
 You are participating in a casual group chat with several other players.
 
@@ -2981,6 +3306,15 @@ async function writeAnswer(turn) {
       turn.name ?? 'you'
     );
 
+  /*
+   * Off the room rather than off the turn, so it is the same character in
+   * round three as it was in round one without anything being carried.
+   * `turn.bit` is for the sample scripts, which need to ask for one.
+   */
+  const bit = turn.bit
+    ? resolveBit(turn.bit, turn.roomId ?? 'default')
+    : bitFor(turn.roomId ?? 'default');
+
 
   /*
    * The room has stopped typing words, so neither does it.
@@ -3073,6 +3407,10 @@ async function writeAnswer(turn) {
         piling: situation.read.piling,
 
         terse: wasTerse(situation.read.ownLines),
+
+        inCharacter: Boolean(bit),
+
+        needsRoom: Boolean(bit?.needsRoom),
       }
     );
 
@@ -3105,7 +3443,8 @@ async function writeAnswer(turn) {
     system:
       systemPrompt(
         persona,
-        turn.answerSeconds ?? 40
+        turn.answerSeconds ?? 40,
+        bit
       ),
 
     messages:
@@ -3306,6 +3645,7 @@ async function writeAnswer(turn) {
       nameUse: plan.nameUse,
       renamed,
       repeated,
+      bit: bit?.key ?? null,
     },
 
     stopReason:
@@ -3517,6 +3857,11 @@ module.exports = {
   answerShape,
   trimClause,
   cleanText,
+
+  BITS,
+  bitFor,
+  bitOverride,
+  resolveBit,
 
   isKeymash,
   roomIsMashing,
