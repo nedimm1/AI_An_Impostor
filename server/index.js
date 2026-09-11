@@ -37,7 +37,7 @@ try {
   // No .env. The environment is expected to carry the key instead.
 }
 
-const { castVote, writeAnswer, bitOverride } = require('./impostor');
+const { castVote, writeAnswer, bitOverride, BIT_ONE_IN, MODEL } = require('./impostor');
 
 const PORT = Number(process.env.IMPOSTOR_PORT ?? 8787);
 
@@ -234,6 +234,18 @@ server.listen(PORT, () => {
   console.log(`\n  put that in EXPO_PUBLIC_IMPOSTOR_URL and start the app\n`);
 
   /*
+   * Which route, said plainly.
+   *
+   * The two variants differ by a suffix and behave nothing alike: the free
+   * pool refuses under load and the room quietly falls back to stock lines,
+   * so a server on the wrong one looks like a writing problem rather than a
+   * routing one. Printing it is what makes that a five-second check.
+   */
+  console.log(
+    `  model            ${MODEL}   ${MODEL.endsWith(':free') ? '(FREE POOL - refuses under load, 50 requests a day)' : '(paid)'}\n`
+  );
+
+  /*
    * Said out loud, because a cranked bit rate makes the impostor look far
    * stranger than it ships as, and it is an easy thing to leave on.
    */
@@ -241,7 +253,7 @@ server.listen(PORT, () => {
 
   if (bits.forced) {
     console.log(`  BIT OVERRIDE     every match is "${bits.forced.key}"\n`);
-  } else if (bits.oneIn !== 8) {
+  } else if (bits.oneIn !== BIT_ONE_IN) {
     console.log(
       `  BIT OVERRIDE     one match in ${bits.oneIn} is in character${bits.oneIn === 1 ? ' (all of them)' : ''}\n`
     );

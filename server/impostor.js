@@ -21,14 +21,22 @@ const { OpenRouter } = require('./openrouter');
 /**
  * The model, on OpenRouter.
  *
- * `:free` is not a discount, it is a shared pool: the request goes to Google
- * AI Studio's free allowance alongside everyone else's, and when that pool is
- * busy it answers 429 rather than queueing. The client retries, and the room
- * already falls back to a stock line when a turn cannot be written, so a busy
- * pool costs the impostor a turn rather than the match. Drop the `:free` (or
- * set OPENROUTER_MODEL) to route to the paid copy of the same weights.
+ * The paid copy, deliberately. `:free` is not a discount on this, it is a
+ * different route: one provider - Google AI Studio's shared allowance - which
+ * answers 429 rather than queueing when it is busy, which it continuously is.
+ * On top of that the platform caps free models at 50 requests a day across
+ * all of them, and a match makes ~16 calls. Three matches a day, badly.
+ *
+ * It used to default to `:free`, which meant the only thing keeping the game
+ * on the working route was a line in somebody's `.env` - and the failure is
+ * silent, since the room falls back to a stock line when a turn cannot be
+ * written. A machine without that file played a whole match of stock lines
+ * and looked like a prompt problem.
+ *
+ * Set OPENROUTER_MODEL to override. `google/gemma-4-31b-it:free` is the
+ * emergency route if the credit runs out - it plays, badly.
  */
-const MODEL = process.env.OPENROUTER_MODEL ?? 'google/gemma-4-31b-it:free';
+const MODEL = process.env.OPENROUTER_MODEL ?? 'google/gemma-4-31b-it';
 
 /**
  * Models to try when the first one is rate-limited, in order.
@@ -4031,6 +4039,7 @@ module.exports = {
   BITS,
   bitFor,
   bitOverride,
+  BIT_ONE_IN,
   resolveBit,
 
   isKeymash,
