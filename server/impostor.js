@@ -994,7 +994,7 @@ function personaFor(seed, name) {
  *
  * And it is rare. Rare is the point: a bit is memorable, and an impostor that
  * turns up in character every match teaches the room that the strange seat is
- * the bot, which inverts the whole advantage. One match in eight.
+ * the bot, which inverts the whole advantage. One match in twenty.
  */
 
 const BITS = [
@@ -1134,16 +1134,16 @@ function resolveBit(bit, seed) {
 
 
 /*
- * One match in eight, and a different draw from the persona.
+ * One match in twenty, and a different draw from the persona.
  *
  * Salted so the two hashes do not move together - the same room picking both
  * the same background and the same bit makes the pair predictable, and half
  * the point of the persona is that the room cannot learn it.
  */
-const BIT_ONE_IN = 8;
+const BIT_ONE_IN = 20;
 
 /*
- * Both overrides exist to watch the thing work, which at one match in eight
+ * Both overrides exist to watch the thing work, which at one match in twenty
  * is otherwise a lot of matches.
  *
  *   IMPOSTOR_BIT_ONE_IN=1     every match is in character

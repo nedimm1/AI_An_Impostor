@@ -36,9 +36,7 @@ const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
  * trade, and it is invisible — a quantised model does not error, it just
  * writes slightly worse and you never find out why.
  *
- * So: a floor on precision first, cheapest within that floor second. As of
- * writing that lands on Venice at bf16 / $0.12 or DeepInfra at fp8 / $0.13,
- * still a third of what unpinned routing was costing.
+ * So: a floor on precision first, cheapest within that floor second.
  *
  * Set OPENROUTER_QUANTIZATIONS='' to allow anything, or name your own list.
  * None of this applies to the `:free` variant, which has exactly one provider.
@@ -47,6 +45,36 @@ const QUANTIZATIONS =
   process.env.OPENROUTER_QUANTIZATIONS === undefined
     ? ['bf16', 'fp8']
     : process.env.OPENROUTER_QUANTIZATIONS.split(',')
+        .map((name) => name.trim())
+        .filter(Boolean);
+
+/**
+ * Which of those providers to ask first, in order.
+ *
+ * The precision filter alone is not enough. `sort: 'price'` picks a provider
+ * and then serves whichever of that provider's endpoints it likes: DeepInfra
+ * publishes Gemma at both $0.13 and $0.27 per million input tokens, and price
+ * sorting was landing on the $0.27 one - 2.25x the cheapest endpoint that
+ * meets the precision floor, for identical output.
+ *
+ * Naming the order pins the endpoint as well as the provider. Measured, 15
+ * input tokens each, on the same prompt:
+ *
+ *   Venice      bf16   $0.120/M    <- named first
+ *   DeepInfra   fp8    $0.130/M
+ *   Novita      bf16   $0.140/M
+ *
+ * Fallbacks stay ON. A hard pin to one provider is the exact failure the
+ * `:free` pool has - one endpoint, nothing to route around when it is busy -
+ * and paying $0.14 beats not getting a turn. Anything past this list is still
+ * allowed, still filtered by precision; the order only says who to try first.
+ *
+ * Set OPENROUTER_PROVIDER_ORDER='' to go back to price sorting alone.
+ */
+const PROVIDER_ORDER =
+  process.env.OPENROUTER_PROVIDER_ORDER === undefined
+    ? ['Venice', 'DeepInfra', 'Novita']
+    : process.env.OPENROUTER_PROVIDER_ORDER.split(',')
         .map((name) => name.trim())
         .filter(Boolean);
 
@@ -155,6 +183,17 @@ class OpenRouter {
     if (request.stop_sequences) body.stop = request.stop_sequences;
 
     /*
+     * No thinking out loud.
+     *
+     * Gemma has no reasoning mode and ignores this, but most of the free
+     * models on the platform are reasoning models, and on a budget of a
+     * hundred tokens they spend the lot on the thinking and return an empty
+     * message - or, worse, type the thinking into the room. Turning it off
+     * is what makes them usable here at all. Harmless where unsupported.
+     */
+    body.reasoning = { enabled: false };
+
+    /*
      * Precision floor, then price. See QUANTIZATIONS above for why the order
      * is that way round and not the other.
      *
@@ -167,6 +206,7 @@ class OpenRouter {
     if (!isFree(request.model)) {
       body.provider = { sort: 'price' };
       if (QUANTIZATIONS.length) body.provider.quantizations = QUANTIZATIONS;
+      if (PROVIDER_ORDER.length) body.provider.order = PROVIDER_ORDER;
     }
 
     /*

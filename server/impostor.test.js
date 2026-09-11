@@ -1155,8 +1155,8 @@ describe('turning up in character', () => {
     const rooms = Array.from({ length: 20000 }, (_, i) => `room_${i.toString(36)}`);
     const rate = rooms.filter((room) => bitFor(room)).length / rooms.length;
 
-    expect(rate).toBeGreaterThan(0.08);
-    expect(rate).toBeLessThan(0.18);
+    expect(rate).toBeGreaterThan(0.03);
+    expect(rate).toBeLessThan(0.08);
   });
 
   it('is the same bit all match, since one that arrives in round two is a glitch', () => {
