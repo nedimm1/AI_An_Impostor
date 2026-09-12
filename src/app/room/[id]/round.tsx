@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AnswerBubble } from '@/components/game/answer-bubble';
 import { Composer, type ComposerHandle } from '@/components/game/composer';
 import { RoundBar } from '@/components/game/round-bar';
+import { TurnStrip } from '@/components/game/turn-strip';
 import { VotePanel } from '@/components/game/vote-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
@@ -239,6 +240,19 @@ export default function RoundScreen() {
           remaining={remaining}
           duration={room.settings.answerSeconds}
           status={status}
+          turns={
+            // Only while somebody is on the clock. During the vote the strip
+            // would be showing an order nobody is working through any more.
+            room.phase === 'answering' ? (
+              <TurnStrip
+                turnOrder={room.turnOrder}
+                turnIndex={room.turnIndex}
+                players={room.players}
+                turnsEach={inTiebreaker ? undefined : room.settings.turnsEach}
+                accused={room.tiebreaker}
+              />
+            ) : null
+          }
         />
 
         <FlatList

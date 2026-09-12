@@ -14,7 +14,7 @@ import { countWord, DEFAULT_SETTINGS } from '@/game/types';
  * Sized off the settings so the picture on the front page is the room you are
  * actually put in, whatever the matchmaker is set to seat.
  */
-const LINEUP_COLOURS = ['Red', 'Teal', 'Olive', 'Pink', 'Blue', 'Silver', 'Violet'];
+const LINEUP_COLOURS = ['Red', 'Green', 'Olive', 'Pink', 'Blue', 'Silver', 'Violet'];
 const LINEUP = Array.from({ length: DEFAULT_SETTINGS.playerCount }, (_, i) => {
   const colour = SEAT_COLOURS.find((c) => c.name === LINEUP_COLOURS[i % LINEUP_COLOURS.length]);
   return {

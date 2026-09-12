@@ -108,7 +108,7 @@ async function main() {
   // no seat, so one is picked here purely so the output has somebody in it.
   // The room deals colours now (`src/game/seats.ts`), so the sample sits in one
   // rather than inventing a name the game would never hand out.
-  const NAMES = ['Mr. Red', 'Mr. Teal', 'Mr. Olive', 'Mr. Pink', 'Mr. Blue', 'Mr. Silver'];
+  const NAMES = ['Mr. Red', 'Mr. Green', 'Mr. Olive', 'Mr. Pink', 'Mr. Blue', 'Mr. Silver'];
   const index =
     cli.persona !== undefined
       ? Number(cli.persona) % PERSONAS.length

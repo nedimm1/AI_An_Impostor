@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -19,6 +20,12 @@ type RoundBarProps = {
   duration: number;
   /** Right-hand caption, e.g. whose turn it is. */
   status?: string;
+  /**
+   * The turn order strip, when there is one to draw. Passed as a node rather
+   * than as data so this file stays a layout and does not have to know what a
+   * player is.
+   */
+  turns?: ReactNode;
 };
 
 /**
@@ -34,6 +41,7 @@ export function RoundBar({
   remaining,
   duration,
   status,
+  turns,
 }: RoundBarProps) {
   const progress = remaining === null || duration <= 0 ? 0 : remaining / duration;
   const urgent = remaining !== null && remaining <= 15;
@@ -62,6 +70,8 @@ export function RoundBar({
           {status}
         </ThemedText>
       ) : null}
+
+      {turns}
 
       <View style={styles.track}>
         <View

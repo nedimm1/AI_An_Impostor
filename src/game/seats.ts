@@ -52,30 +52,33 @@
  * happens here rather than in the draw: no Rose beside Red, no Amber beside
  * Orange, no Beige beside Tan. Every entry is one short common word that reads
  * the same out loud as it does on screen, and the words carry the distinction
- * even where the hues are neighbours - Blue, Indigo and Violet are close to
- * look at and impossible to mix up to read, which is the way round that
- * matters when the label is text first and a tint second.
+ * even where the hues are neighbours - Blue and Violet are close to look at and
+ * impossible to mix up to read, which is the way round that matters when the
+ * label is text first and a tint second.
  *
  * The grey one is Silver for a reason that a test now holds in place: "Grey"
  * and "Green" share their first two letters, so they render as the same avatar
  * letters - and they are the same word to a room half-reading it at speed.
  *
- * Teal and Cyan are 2% darker than they look like they should be. Mid-luminance
- * is the hard case for a colour that has to carry text: at their natural depth
- * neither white nor ink cleared 4.5:1 on them - 4.47 and 4.46, the only two in
- * the pool that could not be made readable by choosing a text colour. Two
- * percent buys the margin, and a test holds it.
+ * Cyan is 2% darker than it looks like it should be. Mid-luminance is the hard
+ * case for a colour that has to carry text: at its natural depth neither white
+ * nor ink cleared 4.5:1 on it. Two percent buys the margin, and a test holds
+ * it. (Teal had the same problem and the same fix, before it was cut for
+ * sitting too close to Green.)
  *
  * Fifteen for six seats. The pool has to be comfortably bigger than the room
  * or a colour turns up every match and starts meaning something, which is the
  * cross-match recognition this exists to remove, one level down.
  *
- * Gold and Crimson are on the end for how they sound rather than for a hue the
- * list was missing - every seat is read as "Mr. Something" all match, and the
- * film the honorific comes from got a lot out of that. Blonde is the obvious
- * one and cannot be here: it shares its first two letters with Blue, so the
- * room would hold two seats rendering BL, and Blue is the one with a colour
- * behind it.
+ * Gold is on the end for how it sounds rather than for a hue the list was
+ * missing - every seat is read as "Mr. Something" all match, and the film the
+ * honorific comes from got a lot out of that.
+ *
+ * Twelve, not fifteen. Teal, Crimson and Indigo were cut for being too close to
+ * something already here - measured as CIE76 distance, Red/Crimson came out at
+ * 13.5 and Green/Teal at 19.4, while Indigo sat between Blue and Violet and was
+ * the cause of the two tightest pairs in the pool at 13.2 and 11.2. The gap to
+ * beat is now Yellow/Gold at 16.5; anything added should clear that.
  *
  * `tint` is the bubble and the avatar dot - and, in the answer bubble, the
  * author's name itself, which is why these are not free to be any depth that
@@ -84,11 +87,9 @@
  * `textMuted` sits at 3.5 and `accent` at 4.6, so anything dimmer than that is
  * dimmer than text the app already considers readable.
  *
- * Most land at about 0.81 of their old value. Blue, Indigo and Violet barely
- * move, because those hues are already near the floor at full saturation -
- * there is no depth left in them to take. Crimson went the other way: it was
- * below the floor at 3.1 from the day it was added, so it is 9% brighter here
- * rather than darker, which is the one place this list stops being uniform.
+ * Most land at about 0.81 of their old value. Blue and Violet barely move,
+ * because those hues are already near the floor at full saturation - there is
+ * no depth left in them to take.
  *
  * Black and White stay absent: one of them always disappears into the
  * background.
@@ -105,16 +106,13 @@ export const SEAT_COLOURS: SeatColour[] = [
   { name: 'Yellow', tint: '#cfa031' },
   { name: 'Olive', tint: '#728400' },
   { name: 'Green', tint: '#278557' },
-  { name: 'Teal', tint: '#0f8376' },
   { name: 'Cyan', tint: '#00809e' },
   { name: 'Blue', tint: '#3c5fd4' },
-  { name: 'Indigo', tint: '#6c54cb' },
   { name: 'Violet', tint: '#884bbe' },
   { name: 'Pink', tint: '#b43686' },
   { name: 'Brown', tint: '#8c6747' },
   { name: 'Silver', tint: '#7e8286' },
   { name: 'Gold', tint: '#b08535' },
-  { name: 'Crimson', tint: '#c92044' },
 ];
 
 /** Everybody, every match. See the note above for why it is not a choice. */
@@ -130,8 +128,8 @@ export function seatName(colour: SeatColour) {
  *
  * Your own answers are drawn on your own tint, and a single text colour cannot
  * serve fifteen backgrounds. White on Yellow measures 2.4:1 - unreadable - and
- * on Gold and Silver it is not much better, while on Blue or Crimson white is
- * the only thing that works. So the choice is made per colour, by measuring:
+ * on Gold and Silver it is not much better, while on Blue or Red white is the
+ * only thing that works. So the choice is made per colour, by measuring:
  * whichever of white or the page ink stands further off that tint wins.
  *
  * Six of the fifteen come out ink rather than white, which is why this is a
@@ -169,7 +167,7 @@ export function textOnTint(tint: string) {
  * "Mr. Pink" -> "Pink".
  *
  * For the vote strip, where every chip is 52px wide and every name starts with
- * the same four characters. "Mr. Indigo" truncates to "Mr. Indi…" there, which
+ * the same four characters. "Mr. Violet" truncates to "Mr. Viol…" there, which
  * spends the width on the part carrying no information and clips the part
  * carrying all of it. In a list where everybody is a Mr., nobody is.
  */

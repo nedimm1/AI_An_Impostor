@@ -131,6 +131,7 @@ function matchedRoom(id: string, yourId: string, strangers: Player[]): Room {
     ballotClosed: false,
     eliminatedId: null,
     tiebreaker: null,
+    pendingTiebreaker: null,
     outcome: null,
     spectating: false,
     impostorId: impostor?.id ?? null,
@@ -168,6 +169,7 @@ function startTiebreaker(room: Room, tied: string[]): Room {
     ...room,
     phase: 'answering',
     tiebreaker: tied,
+    pendingTiebreaker: null,
     prompt: tiebreakerPrompt(room, tied),
     votes: {},
     voted: [],
@@ -220,8 +222,26 @@ function outcomeFor(room: Room, eliminatedId: string | null): Outcome | null {
  */
 function resolveBallot(room: Room): Room {
   const result = voteResult(room);
+
+  /*
+   * A first tie stops at the result rather than going straight into the
+   * tiebreaker. It used to do the latter, and the room was simply handed a new
+   * prompt with no account of what had happened to the vote it had just cast —
+   * the one moment in the round where the room most needs telling. So the tie
+   * gets the same verdict beat every other outcome gets, and the tiebreaker
+   * starts when that beat ends.
+   */
   if (result.kind === 'tied' && !room.tiebreaker) {
-    return startTiebreaker(room, result.playerIds);
+    return {
+      ...room,
+      phase: 'verdict',
+      eliminatedId: null,
+      pendingTiebreaker: result.playerIds,
+      ballotClosed: true,
+      turnEndsAt: null,
+      voteEndsAt: null,
+      verdictEndsAt: secondsFromNow(room.settings.resultSeconds),
+    };
   }
 
   const eliminatedId = result.kind === 'eliminated' ? result.playerId : null;
@@ -322,12 +342,20 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
       const stillAccused = room.tiebreaker?.filter((id) => id !== action.playerId) ?? null;
       const accusationHeld = stillAccused === null || stillAccused.length >= 2;
 
+      // Same for a tie that has been announced but not yet started. Walking out
+      // while the room is being told it tied leaves fewer than two to put up,
+      // and a tiebreaker between one player is not a tiebreaker — the round is
+      // simply spent, which is what a tied tiebreaker does too.
+      const stillPending = room.pendingTiebreaker?.filter((id) => id !== action.playerId) ?? null;
+      const pendingHolds = stillPending !== null && stillPending.length >= 2;
+
       const left: Room = {
         ...room,
         players: room.players.map((p) =>
           p.id === action.playerId ? { ...p, connected: false } : p
         ),
         tiebreaker: stillAccused,
+        pendingTiebreaker: pendingHolds ? stillPending : null,
         prompt:
           stillAccused === null
             ? room.prompt
@@ -417,6 +445,13 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
       // waking can fire against a room that has already moved on, and without
       // this that would throw away a round that had started.
       if (!room || room.phase !== 'verdict' || room.outcome) return room;
+
+      // The tie's verdict ends by going into the tiebreaker, not by starting a
+      // new round — the round the tie happened in is not over yet.
+      if (room.pendingTiebreaker) {
+        return startTiebreaker(room, room.pendingTiebreaker);
+      }
+
       const round = room.round + 1;
       return {
         ...room,
@@ -428,6 +463,7 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
         ballotClosed: false,
         eliminatedId: null,
         tiebreaker: null,
+        pendingTiebreaker: null,
         turnOrder: turnOrderFor(room.players, round, room.settings.turnsEach),
         turnIndex: 0,
         turnEndsAt: secondsFromNow(room.settings.answerSeconds),

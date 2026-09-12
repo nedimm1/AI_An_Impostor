@@ -204,6 +204,9 @@ describe('what the impostor is told', () => {
       { type: 'castVote', voterId: impostorId, targetId: 'p_kofi' }
     );
 
+    // The tie gets a result of its own now; the tiebreaker opens when it ends.
+    state = play(state, { type: 'nextRound' });
+
     expect(state.tiebreaker).toContain(impostorId);
     const turn = impostorTurn(state);
     expect(turn.tiebreaker).toBe(true);
@@ -251,6 +254,7 @@ describe('what the impostor is told when it votes', () => {
       { type: 'castVote', voterId: 'p_ines', targetId: YOUR_ID },
       { type: 'castVote', voterId: impostorId, targetId: 'p_kofi' }
     );
+    state = play(state, { type: 'nextRound' });
 
     const tied = impostorBallot(state);
     expect(tied.accused).toHaveLength(2);

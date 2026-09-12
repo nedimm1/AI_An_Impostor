@@ -1,5 +1,5 @@
 import { Redirect, useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { Fragment, useEffect } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
@@ -85,6 +85,12 @@ export default function ResultsScreen() {
   const nobodyVoted = Object.keys(room.votes).length === 0;
   const humansWon = room.outcome === 'humans';
 
+  // A tie that is about to become a tiebreaker, rather than one that spent the
+  // round. The two are told apart by whether there is anything to go into.
+  const tiedUp = (room.pendingTiebreaker ?? [])
+    .map((id) => playerById(room, id))
+    .filter((p): p is NonNullable<typeof p> => p != null);
+
   const handleKeepWatching = () => send({ type: 'spectate' });
 
   const handlePlayAgain = () => {
@@ -139,9 +145,49 @@ export default function ResultsScreen() {
           </View>
         ) : (
           <View style={styles.roundBlock}>
-            {eliminated ? (
+            {tiedUp.length >= 2 ? (
               <>
-                <Avatar id={eliminated.id} name={eliminated.name} size={64} dimmed />
+                <View style={styles.tiedPair}>
+                  {tiedUp.map((p, i) => (
+                    <Fragment key={p.id}>
+                      {i > 0 ? (
+                        <ThemedText type="label" themeColor="textMuted" style={styles.tiedAnd}>
+                          vs
+                        </ThemedText>
+                      ) : null}
+                      <View style={styles.tiedSeat}>
+                        <Avatar
+                          id={p.id}
+                          name={p.name}
+                          tint={p.tint}
+                          size={64}
+                          ringColor={Colors.warning}
+                        />
+                        <ThemedText type="small" numberOfLines={1}>
+                          {p.isYou ? 'You' : p.name}
+                        </ThemedText>
+                      </View>
+                    </Fragment>
+                  ))}
+                </View>
+
+                <ThemedText type="title">The room is split</ThemedText>
+
+                <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
+                  {tiedUp.some((p) => p.isYou)
+                    ? 'Nobody is out. You and the other one go again — say why it is not you, then the room votes between you.'
+                    : 'Nobody is out. These two go again, then the room votes between them.'}
+                </ThemedText>
+              </>
+            ) : eliminated ? (
+              <>
+                <Avatar
+                  id={eliminated.id}
+                  name={eliminated.name}
+                  tint={eliminated.tint}
+                  size={64}
+                  dimmed
+                />
                 <ThemedText type="title">
                   {youWereVotedOut ? 'You were voted out' : `${eliminated.name} is out`}
                 </ThemedText>
@@ -283,6 +329,21 @@ const styles = StyleSheet.create({
   },
   centered: {
     textAlign: 'center',
+  },
+  /* The two a tie put up, side by side, because that is what a tie looks like. */
+  tiedPair: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: Spacing.two,
+  },
+  tiedSeat: {
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  tiedAnd: {
+    // Level with the faces rather than the names below them.
+    marginTop: Spacing.five,
   },
   yourVote: {
     flexDirection: 'row',

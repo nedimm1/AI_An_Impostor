@@ -251,27 +251,65 @@ describe('ties', () => {
     );
   }
 
-  it('reopens the room to talk it out rather than removing anybody', () => {
+  /** A tie, then the beat where the room is told, then the tiebreaker itself. */
+  function throughTheTie(state: Room | null): Room | null {
+    return play(tiedBallot(state), { type: 'nextRound' });
+  }
+
+  it('stops at the result and says who tied, before anything reopens', () => {
     const tied = tiedBallot(seated());
-    expect(room(tied).tiebreaker).toEqual(expect.arrayContaining(['p_mara', 'p_deniz']));
-    expect(room(tied).phase).toBe('answering');
+    expect(room(tied).phase).toBe('verdict');
+    expect(room(tied).pendingTiebreaker).toEqual(
+      expect.arrayContaining(['p_mara', 'p_deniz'])
+    );
+    // Not in the tiebreaker yet — the room is being told about it, which is a
+    // different thing from talking it out.
+    expect(room(tied).tiebreaker).toBeNull();
     expect(room(tied).eliminatedId).toBeNull();
-    expect(room(tied).votes).toEqual({});
-    expect(room(tied).ballotClosed).toBe(false);
+    expect(room(tied).ballotClosed).toBe(true);
+    // The votes are still there to be read back on the result screen.
+    expect(Object.keys(room(tied).votes)).toHaveLength(4);
+  });
+
+  it('reopens the room to talk it out when that result ends', () => {
+    const talking = throughTheTie(seated());
+    expect(room(talking).tiebreaker).toEqual(expect.arrayContaining(['p_mara', 'p_deniz']));
+    expect(room(talking).pendingTiebreaker).toBeNull();
+    expect(room(talking).phase).toBe('answering');
+    expect(room(talking).eliminatedId).toBeNull();
+    expect(room(talking).votes).toEqual({});
+    expect(room(talking).ballotClosed).toBe(false);
+  });
+
+  it('goes into the tiebreaker rather than on to the next round', () => {
+    const before = room(seated()).round;
+    expect(room(throughTheTie(seated())).round).toBe(before);
   });
 
   it('leaves the accused votable but does not narrow the ballot to them', () => {
-    const tied = tiedBallot(seated());
+    const talking = throughTheTie(seated());
     // Everyone alive still votes, and everyone alive can still be named.
-    expect(survivors(room(tied))).toHaveLength(5);
+    expect(survivors(room(talking))).toHaveLength(5);
   });
 
   it('spends the round when the tiebreaker ties too', () => {
-    const twice = tiedBallot(tiedBallot(seated()));
+    const twice = tiedBallot(throughTheTie(seated()));
     expect(room(twice).phase).toBe('verdict');
+    expect(room(twice).pendingTiebreaker).toBeNull();
     expect(room(twice).eliminatedId).toBeNull();
     expect(room(twice).outcome).toBeNull();
     expect(survivors(room(twice))).toHaveLength(5);
+  });
+
+  it('drops the tiebreaker if one of the two walks out while it is announced', () => {
+    // A tiebreaker between one player is not a tiebreaker, and handing the
+    // elimination to whoever stayed would make quitting a way to remove people.
+    const tied = tiedBallot(seated());
+    const left = play(tied, { type: 'playerLeft', playerId: 'p_mara' });
+
+    expect(room(left).pendingTiebreaker).toBeNull();
+    expect(room(left).phase).toBe('verdict');
+    expect(room(left).eliminatedId).toBeNull();
   });
 });
 

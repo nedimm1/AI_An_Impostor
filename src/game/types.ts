@@ -167,6 +167,18 @@ export type Room = {
    * between them. Null outside a tiebreaker.
    */
   tiebreaker: string[] | null;
+  /**
+   * Who a tie has just put up, while the result of that vote is still on
+   * screen. Set only during the verdict that announces the tie, and consumed
+   * when the room moves on — at which point it becomes `tiebreaker`.
+   *
+   * Kept apart from `tiebreaker` rather than folded into it because they are
+   * different states that happen to name the same two people: this one means
+   * "the room is being told", and that one means "the room is talking it out".
+   * A tie used to skip the telling entirely and drop the room into a new
+   * prompt with no explanation of what had just happened.
+   */
+  pendingTiebreaker: string[] | null;
   /** Set once the match is decided; null while it is still running. */
   outcome: Outcome | null;
   /** You were voted out and chose to keep watching rather than leave. */
@@ -206,7 +218,7 @@ export function countWord(n: number) {
   return words[n] ?? String(n);
 }
 
-/** "Mr. Red", "Mr. Red and Mr. Teal", "Mr. Red, Mr. Teal and Mr. Pink". */
+/** "Mr. Red", "Mr. Red and Mr. Blue", "Mr. Red, Mr. Blue and Mr. Pink". */
 export function listNames(names: string[]) {
   if (names.length <= 1) return names[0] ?? 'nobody';
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
