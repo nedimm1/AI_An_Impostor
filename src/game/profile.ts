@@ -8,8 +8,10 @@
  * this install and written to disk, and everything the server will later hang
  * off a player hangs off it.
  *
- * The name is stored beside it because it is the same lifetime, not because it
- * identifies anyone — names are typed by the player and are not unique.
+ * There is no name here. The room deals every seat a colour for the length of
+ * one match (`seats.ts`), so there is nothing about you to store and nothing
+ * for a room to recognise you by next time. The id stays, because a report has
+ * to outlive the seat it was made against.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -25,8 +27,6 @@ export type Profile = {
    * names. Never shown to another player.
    */
   playerId: string;
-  /** What the room calls you. Yours to change, and not an identity. */
-  displayName: string;
   /**
    * Credential from the server. Null until there is a server to issue one —
    * the field exists so the storage shape does not have to change when there
@@ -39,7 +39,6 @@ export type Profile = {
 export function newProfile(): Profile {
   return {
     playerId: Crypto.randomUUID(),
-    displayName: '',
     authToken: null,
     createdAt: Date.now(),
   };
@@ -52,7 +51,6 @@ function isProfile(value: unknown): value is Profile {
   return (
     typeof p.playerId === 'string' &&
     p.playerId.length > 0 &&
-    typeof p.displayName === 'string' &&
     (p.authToken === null || typeof p.authToken === 'string') &&
     typeof p.createdAt === 'number'
   );

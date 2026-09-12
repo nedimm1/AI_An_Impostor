@@ -9,7 +9,6 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -27,9 +26,6 @@ const SAVE_DEBOUNCE_MS = 400;
 type RoomContextValue = MatchTransport & {
   /** False until the stored profile has been read back. */
   hydrated: boolean;
-  /** The name, or '' before the profile is read. */
-  displayName: string;
-  setName: (name: string) => void;
 };
 
 const RoomContext = createContext<RoomContextValue | null>(null);
@@ -49,8 +45,10 @@ export function RoomProvider({ children }: PropsWithChildren) {
     };
   }, []);
 
-  // Held briefly because the name field commits on every keystroke, and one
-  // disk write per letter is not worth it.
+  // Nothing edits the profile any more, so this is one write behind the first
+  // read — the mint. Kept debounced rather than inlined into `loadProfile`
+  // because the shape is about to grow a server-issued token, and that will
+  // change under the same rule: write it, briefly after it changes.
   useEffect(() => {
     if (!profile) return;
     const timer = setTimeout(() => void saveProfile(profile), SAVE_DEBOUNCE_MS);
@@ -59,19 +57,12 @@ export function RoomProvider({ children }: PropsWithChildren) {
 
   const transport = useLocalTransport(profile);
 
-  const setName = useCallback(
-    (name: string) => setProfile((current) => (current ? { ...current, displayName: name } : current)),
-    []
-  );
-
   const value = useMemo(
     () => ({
       ...transport,
       hydrated: profile !== null,
-      displayName: profile?.displayName ?? '',
-      setName,
     }),
-    [transport, profile, setName]
+    [transport, profile]
   );
 
   return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>;

@@ -12,7 +12,18 @@ export type Phase = 'answering' | 'voting' | 'verdict';
 
 export type Player = {
   id: string;
+  /**
+   * `Mr. Pink`. Handed out by the room, never typed — see `seats.ts` for the
+   * three reasons, of which the load-bearing one is that a typed name made the
+   * impostor's seat look different from a human's before it wrote anything.
+   */
   name: string;
+  /**
+   * The colour behind the name, for the bubble and the avatar dot. Carried on
+   * the player so the word and the swatch cannot disagree: they are two
+   * renderings of one draw, not two lookups that have to be kept in step.
+   */
+  tint: string;
   /** True for the player using this device. */
   isYou: boolean;
   /**
@@ -195,7 +206,7 @@ export function countWord(n: number) {
   return words[n] ?? String(n);
 }
 
-/** "Mara", "Mara and Deniz", "Mara, Deniz and Ines". */
+/** "Mr. Red", "Mr. Red and Mr. Teal", "Mr. Red, Mr. Teal and Mr. Pink". */
 export function listNames(names: string[]) {
   if (names.length <= 1) return names[0] ?? 'nobody';
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;

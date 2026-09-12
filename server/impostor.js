@@ -1150,6 +1150,47 @@ function resolveBit(bit, seed) {
  */
 const BIT_ONE_IN = 20;
 
+/* ============================================================
+ * THE NAME BEHIND THE HANDLE
+ * ============================================================ */
+
+/*
+ * What it is actually called, for the one moment somebody asks.
+ *
+ * The room deals every seat a handle - Mr. Gold, Mr. Teal - and that is what
+ * appears over its messages. It is not a name, and the prompt set contains
+ * questions that go looking for the real one: "what nickname have you been
+ * given", introductions, a round where people say who they are.
+ *
+ * Without one of these the model answers those out of the handle, because the
+ * handle is the only name it has. Seated as Mr. Gold it wrote "gold because
+ * i'm always last" - a good line, and the wrong instinct to leave it with. A
+ * human with an assigned handle has a name underneath it and reaches for that
+ * one; a seat that puns on its colour every time the subject comes up has a
+ * pattern, and a pattern is what the room is there to find.
+ *
+ * First names only. Nobody gives a surname in a group chat, and a model handed
+ * a full name will use the whole thing at least once.
+ *
+ * Drawn off the room like everything else here, so it holds for the whole
+ * match with no state to carry, and salted apart from the persona and the bit
+ * so the three do not move together.
+ */
+const FIRST_NAMES = [
+  'Sam', 'Jess', 'Tom', 'Aisha', 'Danny', 'Nina', 'Luca', 'Priya',
+  'Ben', 'Chloe', 'Omar', 'Katie', 'Jonas', 'Maya', 'Ellie', 'Rob',
+  'Hana', 'Leo', 'Sofia', 'Adam', 'Ruby', 'Kai', 'Zara', 'Milo',
+];
+
+function nameFor(seed) {
+  let hash = 0;
+  for (const char of `name:${seed}`) {
+    hash = (hash * 131 + char.charCodeAt(0)) | 0;
+  }
+  return FIRST_NAMES[Math.abs(hash) % FIRST_NAMES.length];
+}
+
+
 /*
  * Both overrides exist to watch the thing work, which at one match in twenty
  * is otherwise a lot of matches.
@@ -1215,9 +1256,33 @@ function bitFor(seed) {
  * ROOM ANALYSIS
  * ============================================================ */
 
-/** A player's name as something safe to look for in a sentence. */
+/**
+ * A player's name as something safe to look for in a sentence.
+ *
+ * Matches the bare word, not the full seat name. Everybody in the room is
+ * "Mr. Something" (see `src/game/seats.ts`) and nobody types it that way -
+ * the room says "pink is being weird", never "Mr. Pink is being weird", so a
+ * pattern built from the whole name finds nothing it was built to find.
+ *
+ * The cost, and it is a real one: colour words are also ordinary words. "green
+ * tea" and "orange juice" read as somebody being named, on prompts that are
+ * mostly about food. Both places this feeds are the forgiving direction of
+ * wrong - a spare rewrite of a line that was already fine, and the impostor
+ * thinking it was addressed when it was not - so the over-match is taken
+ * deliberately rather than guessed at with a cleverer rule. If it turns out to
+ * cost real turns, the fix is a context test here, not a narrower pattern.
+ */
 function namePattern(name) {
-  const escaped = String(name).replace(
+  // "Mr. Pink" -> "Pink". Anything ending in a full stop is an honorific, and
+  // everything else is the word the room actually uses.
+  const word =
+    String(name)
+      .trim()
+      .split(/\s+/)
+      .filter((part) => part && !part.endsWith('.'))
+      .pop() ?? String(name);
+
+  const escaped = word.replace(
     /[.*+?^${}()|[\]\\]/g,
     '\\$&'
   );
@@ -2120,15 +2185,15 @@ function buildMemory(ownHistory = []) {
  * so the prompt asks for the opinion rather than the consensus wherever it
  * is not sure of the consensus.
  */
-function systemPrompt(persona, answerSeconds, bit = null) {
+function systemPrompt(persona, answerSeconds, bit = null, firstName = null) {
   return `
-You are ${persona.name} — ${persona.brief}
+You are ${firstName ?? persona.name} — ${persona.brief}
 ${bit ? `
 The bit:
 
 ${bit.note}
 
-This is a bit you are doing, not who you are. Underneath it you are still ${persona.name}, still playing properly, still reading the room, still voting for who you think it is. The character is the voice; everything else about how you play is unchanged.
+This is a bit you are doing, not who you are. Underneath it you are still ${firstName ?? persona.name}, still playing properly, still reading the room, still voting for who you think it is. The character is the voice; everything else about how you play is unchanged.
 
 Two rules below are overridden by this and only by this. The typing style notes describe how people normally type, and your bit is how you type. "Do not perform" means do not perform being human - performing a character is the opposite, it is the most human thing in the room, and it is the reason you are doing it.
 
@@ -2141,7 +2206,16 @@ Never explain the bit. Never announce it. Never step outside it to say you are j
 
 You are participating in a casual group chat with several other players.
 
-Your messages appear directly in the chat under the name "${persona.name}".
+Your messages appear in the chat under "${persona.name}".
+${firstName ? `
+That is a handle the room dealt you when you sat down, the same as everybody else got one. It is not your name, it says nothing about you, and every person in the room knows it was assigned two minutes ago.
+
+So when a question is about your name, your nickname, what people call you, or who you are - it is asking about ${firstName}, not about ${persona.name}. Answer it out of your own life: the name, the nickname you actually get called, where it came from. "${persona.name}" is never the answer to any of those, and a joke about why you are called ${persona.name} is the worst one available, because it is a joke every seat in the room could make about themselves.
+
+First name only. Nobody types a surname into a group chat.
+
+Do not announce it otherwise. Do not sign messages with it. Do not work it into an answer that was not about names.
+` : ''}
 
 You are on a phone and have roughly ${answerSeconds} seconds to type.
 
@@ -3481,7 +3555,8 @@ async function writeAnswer(turn) {
       systemPrompt(
         persona,
         turn.answerSeconds ?? 40,
-        bit
+        bit,
+        nameFor(turn.roomId ?? 'default')
       ),
 
     messages:
@@ -4040,6 +4115,8 @@ module.exports = {
   bitFor,
   bitOverride,
   BIT_ONE_IN,
+  nameFor,
+  FIRST_NAMES,
   resolveBit,
 
   isKeymash,

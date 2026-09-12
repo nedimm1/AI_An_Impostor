@@ -6,7 +6,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { useRoomStore } from '@/game/store';
+import { SEAT_COLOURS, seatName } from '@/game/seats';
 import { countWord, DEFAULT_SETTINGS } from '@/game/types';
 
 /**
@@ -14,22 +14,34 @@ import { countWord, DEFAULT_SETTINGS } from '@/game/types';
  * Sized off the settings so the picture on the front page is the room you are
  * actually put in, whatever the matchmaker is set to seat.
  */
-const LINEUP_NAMES = ['Mara', 'Deniz', 'Kofi', '??', 'Sasha', 'Ines', 'Rune'];
-const LINEUP = Array.from({ length: DEFAULT_SETTINGS.playerCount }, (_, i) => ({
-  id: `lineup-${i}`,
-  name: LINEUP_NAMES[i % LINEUP_NAMES.length],
-}));
+const LINEUP_COLOURS = ['Red', 'Teal', 'Olive', 'Pink', 'Blue', 'Silver', 'Violet'];
+const LINEUP = Array.from({ length: DEFAULT_SETTINGS.playerCount }, (_, i) => {
+  const colour = SEAT_COLOURS.find((c) => c.name === LINEUP_COLOURS[i % LINEUP_COLOURS.length]);
+  return {
+    id: `lineup-${i}`,
+    // Drawn from the real pool so the front page advertises the room you are
+    // actually put in, tints included. Exactly one seat is unreadable, and it
+    // is the slot below — a second mystery avatar in the row reads as a bug.
+    name: colour ? seatName(colour) : '',
+    tint: colour?.tint ?? '',
+  };
+});
+
+/**
+ * How big a seat is on the front page. The unreadable slot is drawn as its own
+ * view rather than an Avatar, so it has to be told the same number or the row
+ * comes out with one seat smaller than the rest.
+ */
+const LINEUP_SIZE = 52;
 
 /** Which slot in the lineup is the one you cannot read — always the middle. */
 const IMPOSTOR_SLOT = Math.floor(DEFAULT_SETTINGS.playerCount / 2);
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { displayName } = useRoomStore();
-
-  // The queue needs something to call you. Once you've picked a name it sticks,
-  // so returning players go straight into the search.
-  const handlePlay = () => router.push(displayName.trim() ? '/queue' : '/name');
+  // Nothing stands between the button and the queue. There is no name to pick
+  // — the room deals you one when it seats you (`seats.ts`).
+  const handlePlay = () => router.push('/queue');
 
   return (
     <Screen>
@@ -43,7 +55,7 @@ export default function HomeScreen() {
                 </ThemedText>
               </View>
             ) : (
-              <Avatar key={p.id} id={p.id} name={p.name} size={40} />
+              <Avatar key={p.id} id={p.id} name={p.name} tint={p.tint} size={LINEUP_SIZE} />
             )
           )}
         </View>
@@ -100,8 +112,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   impostorSlot: {
-    width: 40,
-    height: 40,
+    width: LINEUP_SIZE,
+    height: LINEUP_SIZE,
     borderRadius: Radius.pill,
     backgroundColor: Colors.dangerMuted,
     borderWidth: 1,

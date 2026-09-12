@@ -11,6 +11,7 @@
 
 import { censor } from './censor';
 import { makeId, shuffledPrompts } from './mock';
+import { seatColours, seatName } from './seats';
 import { IMPOSTOR_NAME, TEST_MODE } from './testing';
 import {
   awaitedVoters,
@@ -33,15 +34,14 @@ import {
  * job — see `transport.ts`.
  */
 export type MatchAction =
-  | { type: 'startMatch'; id: string; yourId: string; yourName: string; strangers: Player[] }
+  | { type: 'startMatch'; id: string; yourId: string; strangers: Player[] }
   | { type: 'answerTurn'; text: string; timedOut: boolean; replyToId: string | null }
   | { type: 'playerLeft'; playerId: string }
   | { type: 'castVote'; voterId: string; targetId: string | null }
   | { type: 'closeBallot' }
   | { type: 'nextRound' }
   | { type: 'spectate' }
-  | { type: 'leaveRoom' }
-  | { type: 'rename'; name: string };
+  | { type: 'leaveRoom' };
 
 function secondsFromNow(seconds: number) {
   return Date.now() + seconds * 1000;
@@ -69,24 +69,46 @@ function turnOrderFor(players: Player[], round: number, turnsEach: number) {
  * impostor is drawn here purely so the shell can reveal *someone* at the end —
  * real selection happens server-side and never reaches the client early.
  */
-function matchedRoom(id: string, yourId: string, name: string, strangers: Player[]): Room {
+function matchedRoom(id: string, yourId: string, strangers: Player[]): Room {
   const you: Player = {
     id: yourId,
-    name: name || 'You',
+    name: '',
+    tint: '',
     isYou: true,
     connected: true,
     eliminated: false,
   };
 
   // Your seat is random so you aren't always the first name in the room.
-  const players = [...strangers];
-  players.splice(Math.floor(Math.random() * (players.length + 1)), 0, you);
+  const seated = [...strangers];
+  seated.splice(Math.floor(Math.random() * (seated.length + 1)), 0, you);
 
-  const impostor = strangers[Math.floor(Math.random() * strangers.length)];
+  /*
+   * Everybody is named here, in one pass, including you.
+   *
+   * One pass and one pool is the whole point rather than a tidiness: a room
+   * where your seat is named one way and the others another is a room where
+   * the two can be told apart, and telling seats apart is the game. It is done
+   * after the seating order rather than before so the colour follows the seat,
+   * which keeps the draw honest - your position is random, so your colour is.
+   */
+  const colours = seatColours(id, seated.length);
+  const players = seated.map((player, seat) => ({
+    ...player,
+    name: seatName(colours[seat]),
+    tint: colours[seat].tint,
+  }));
+
+  const impostor = players.filter((p) => !p.isYou)[
+    Math.floor(Math.random() * (players.length - 1))
+  ];
   // Testing only, and a rename rather than a reveal: the room, the model and
   // the transcript all have to agree on what it is called, or it cannot pick
   // its own lines out of the room it is reading. See `testing.ts`.
-  if (TEST_MODE && impostor) impostor.name = IMPOSTOR_NAME;
+  const named =
+    TEST_MODE && impostor
+      ? players.map((p) => (p.id === impostor.id ? { ...p, name: IMPOSTOR_NAME } : p))
+      : players;
 
   const prompts = shuffledPrompts();
 
@@ -95,9 +117,9 @@ function matchedRoom(id: string, yourId: string, name: string, strangers: Player
     youId: yourId,
     phase: 'answering',
     round: 1,
-    players,
+    players: named,
     transcript: [],
-    turnOrder: turnOrderFor(players, 1, DEFAULT_SETTINGS.turnsEach),
+    turnOrder: turnOrderFor(named, 1, DEFAULT_SETTINGS.turnsEach),
     turnIndex: 0,
     turnEndsAt: secondsFromNow(DEFAULT_SETTINGS.answerSeconds),
     voteEndsAt: null,
@@ -232,17 +254,10 @@ function resolveBallot(room: Room): Room {
 export function roomReducer(room: Room | null, action: MatchAction): Room | null {
   switch (action.type) {
     case 'startMatch':
-      return matchedRoom(action.id, action.yourId, action.yourName, action.strangers);
+      return matchedRoom(action.id, action.yourId, action.strangers);
 
     case 'leaveRoom':
       return null;
-
-    case 'rename':
-      if (!room) return room;
-      return {
-        ...room,
-        players: room.players.map((p) => (p.isYou ? { ...p, name: action.name } : p)),
-      };
 
     case 'answerTurn': {
       if (!room || room.phase !== 'answering') return room;

@@ -10,10 +10,16 @@
 
 import type { Player } from './types';
 
+/**
+ * Seats, identified by id only. The names passed in survive as ids and nothing
+ * else — `startMatch` deals every seat its own colour, so whatever a fixture
+ * calls somebody is gone by the time the room exists.
+ */
 function strangers(...names: string[]): Player[] {
   return names.map((name) => ({
     id: `p_${name.toLowerCase()}`,
-    name,
+    name: '',
+    tint: '',
     isYou: false,
     connected: true,
     eliminated: false,
@@ -34,7 +40,6 @@ function seatWith(testMode: string | undefined) {
       type: 'startMatch',
       id: 'rm_flag',
       yourId: 'you',
-      yourName: 'Nedim',
       strangers: strangers('Mara', 'Deniz', 'Kofi', 'Ines'),
     });
 
@@ -54,6 +59,6 @@ describe('test mode', () => {
   it('leaves the seat alone when the flag is off', () => {
     const room = seatWith(undefined);
     const impostor = room.players.find((p: Player) => p.id === room.impostorId);
-    expect(['Mara', 'Deniz', 'Kofi', 'Ines']).toContain(impostor?.name);
+    expect(impostor?.name).toMatch(/^Mr\. /);
   });
 });

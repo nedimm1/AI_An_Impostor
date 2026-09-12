@@ -1,4 +1,4 @@
-import { Redirect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
@@ -14,7 +14,7 @@ import { useRoomStore } from '@/game/store';
  */
 export default function QueueScreen() {
   const router = useRouter();
-  const { displayName, matchmaking, findMatch, room } = useRoomStore();
+  const { matchmaking, findMatch, room } = useRoomStore();
 
   // Asking to be seated is all this screen does. Who the strangers are, how
   // long they take and when the room opens are not its business.
@@ -35,9 +35,6 @@ export default function QueueScreen() {
     if (router.canGoBack()) router.back();
     else router.replace('/');
   };
-
-  // Reached directly without a name (deep link, reload) — go set one first.
-  if (!displayName.trim()) return <Redirect href="/name" />;
 
   return (
     <Screen>

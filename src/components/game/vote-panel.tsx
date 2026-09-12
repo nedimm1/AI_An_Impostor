@@ -5,6 +5,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Pill } from '@/components/ui/pill';
 import { Colors, Radius, Spacing } from '@/constants/theme';
+import { seatShortName } from '@/game/seats';
 import type { Player } from '@/game/types';
 import { formatClock } from '@/hooks/use-countdown';
 
@@ -97,7 +98,8 @@ export function VotePanel({
               <Avatar
                 id={player.id}
                 name={player.name}
-                size={34}
+                tint={player.tint}
+                size={46}
                 dimmed={player.isYou}
                 ringColor={
                   isSelected ? Colors.accent : isAccused ? Colors.warning : undefined
@@ -109,7 +111,7 @@ export function VotePanel({
                 numberOfLines={1}
                 themeColor={player.isYou ? 'textMuted' : 'text'}
                 style={styles.name}>
-                {player.isYou ? 'You' : player.name}
+                {player.isYou ? 'You' : seatShortName(player.name)}
               </ThemedText>
 
               {/* Fixed height so the strip does not jump as the badge changes. */}

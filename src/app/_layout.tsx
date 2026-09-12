@@ -60,7 +60,6 @@ function Routes() {
         animation: 'slide_from_right',
       }}>
       <Stack.Screen name="index" />
-      <Stack.Screen name="name" options={modalOptions} />
       <Stack.Screen name="queue" options={{ gestureEnabled: false }} />
       <Stack.Screen name="how-to-play" options={modalOptions} />
       <Stack.Screen name="settings" options={modalOptions} />

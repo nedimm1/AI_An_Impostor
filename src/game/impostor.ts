@@ -40,7 +40,7 @@ export type ImpostorTurn = {
   roomId: string;
   /**
    * The name on its seat. Sent rather than chosen server-side because the
-   * matchmaker picks it: an impostor told it is Deniz while the room sees Ines
+   * matchmaker picks it: an impostor told it is Mr. Teal while the room sees Mr. Pink
    * answers to the wrong name in front of everybody, and it is reading a
    * transcript its own lines appear in, so it has to recognise itself.
    */

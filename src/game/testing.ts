@@ -49,7 +49,7 @@ export const TEST_MODE = process.env.EXPO_PUBLIC_TEST_MODE === '1';
  * It is a real rename rather than a label over the top, which is worth being
  * clear about: this name is what the room shows, *and* what the model is told
  * it is called, *and* what its own lines come back to it under. That is only
- * safe because it was measured — asked the same prompts as Deniz and as AI,
+ * safe because it was measured — asked the same prompts as Mr. Teal and as AI,
  * the answers were indistinguishable ("cold pizza" / "cold sausage roll",
  * "whistling backwards, badly but loud" / "whistling backwards, badly"). It
  * reads the name as a chat handle and carries on.

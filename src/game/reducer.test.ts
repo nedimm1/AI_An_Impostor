@@ -16,7 +16,6 @@ import {
 } from './types';
 
 const YOUR_ID = 'you-uuid';
-const YOUR_NAME = 'Nedim';
 
 /** Five seats: you and four strangers. */
 const SEATS = 5;
@@ -42,10 +41,16 @@ function withFixedRandom<T>(value: number, run: () => T): T {
   }
 }
 
+/**
+ * Seats, identified by id only. The names passed in survive as ids and nothing
+ * else — `startMatch` deals every seat its own colour, so whatever a fixture
+ * calls somebody is gone by the time the room exists.
+ */
 function strangers(...names: string[]): Player[] {
   return names.map((name) => ({
     id: `p_${name.toLowerCase()}`,
-    name,
+    name: '',
+    tint: '',
     isYou: false,
     connected: true,
     eliminated: false,
@@ -64,7 +69,6 @@ function seated(): Room | null {
       type: 'startMatch',
       id: 'rm_test',
       yourId: YOUR_ID,
-      yourName: YOUR_NAME,
       strangers: strangers('Mara', 'Deniz', 'Kofi', 'Ines'),
     })
   );
@@ -102,7 +106,7 @@ describe('seating', () => {
     const state = seated();
     expect(room(state).youId).toBe(YOUR_ID);
     expect(playerById(room(state), YOUR_ID)?.isYou).toBe(true);
-    expect(playerById(room(state), YOUR_ID)?.name).toBe(YOUR_NAME);
+    expect(playerById(room(state), YOUR_ID)?.name).toMatch(/^Mr\. /);
   });
 
   it('opens on round one with everyone in the turn order', () => {
@@ -416,10 +420,22 @@ describe('waking up to a stale clock', () => {
   });
 });
 
-describe('your name', () => {
-  it('follows you into the room you are already sitting in', () => {
-    const renamed = play(seated(), { type: 'rename', name: 'Someone else' });
-    expect(playerById(room(renamed), YOUR_ID)?.name).toBe('Someone else');
+describe('seat names', () => {
+  it('names every seat, including yours, out of the one pool', () => {
+    const players = room(seated()).players;
+    expect(players.every((p) => /^Mr\. [A-Z][a-z]+$/.test(p.name))).toBe(true);
+    // The tell this exists to close: your seat must not be namable apart from
+    // the rest, because the impostor's is named by whatever names yours.
+    expect(playerById(room(seated()), YOUR_ID)?.name).toMatch(/^Mr\. /);
+  });
+
+  it('never seats two players with the same name', () => {
+    const names = room(seated()).players.map((p) => p.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('gives every seat a tint to render it with', () => {
+    expect(room(seated()).players.every((p) => /^#[0-9a-f]{6}$/.test(p.tint))).toBe(true);
   });
 });
 

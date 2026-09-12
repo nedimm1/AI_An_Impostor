@@ -3,7 +3,15 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Avatar } from '@/components/ui/avatar';
 import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
+import { textOnTint } from '@/game/seats';
 import type { Answer, Player } from '@/game/types';
+
+/**
+ * The avatar, the gutter it sits in and the reply button opposite it are all
+ * this wide. Three separate numbers were three chances for the row to go
+ * crooked the next time one of them is nudged.
+ */
+const AVATAR = 40;
 
 type AnswerBubbleProps = {
   answer: Answer;
@@ -22,13 +30,21 @@ function Quote({
   answer,
   author,
   onOwnBubble,
+  ink,
 }: {
   answer: Answer;
   author?: Player;
   onOwnBubble: boolean;
+  /** What reads on the bubble behind it, when that bubble is your own tint. */
+  ink?: string;
 }) {
-  const color = author ? colorForId(author.id) : Colors.textSecondary;
-  const accent = onOwnBubble ? 'rgba(255, 255, 255, 0.75)' : color;
+  // The seat's own colour, not a hash of its id — the name says "Mr. Green",
+  // so the word beside it has to be green. `colorForId` stays for authorless
+  // rows, which have no seat to take a colour from.
+  const color = author ? author.tint || colorForId(author.id) : Colors.textSecondary;
+  // On your own bubble the quote sits on your tint, so it takes that bubble's
+  // ink rather than a fixed translucent white — which vanished on Yellow.
+  const accent = onOwnBubble ? (ink ?? 'rgba(255, 255, 255, 0.75)') : color;
 
   return (
     <View
@@ -39,7 +55,10 @@ function Quote({
       <ThemedText
         type="small"
         numberOfLines={2}
-        style={onOwnBubble ? styles.quoteTextOwn : styles.quoteText}>
+        style={[
+          onOwnBubble ? styles.quoteTextOwn : styles.quoteText,
+          onOwnBubble && ink ? { color: ink } : null,
+        ]}>
         {answer.timedOut ? 'ran out of time' : answer.text}
       </ThemedText>
     </View>
@@ -100,6 +119,9 @@ export function AnswerBubble({
   const replyLabel = author?.isYou ? 'your own answer' : (author?.name ?? 'this answer');
 
   if (isYou) {
+    const tint = author?.tint || Colors.accent;
+    const ink = author?.tint ? textOnTint(author.tint) : Colors.textOnAccent;
+
     return (
       <View style={[styles.row, styles.rowOwn]}>
         {canReply && onReply ? (
@@ -107,8 +129,8 @@ export function AnswerBubble({
         ) : null}
 
         <View style={styles.bubbleColumn}>
-          <ThemedText type="label" style={styles.ownLabel}>
-            You
+          <ThemedText type="label" style={[styles.ownLabel, { color: tint }]}>
+            {author ? `${author.name} (you)` : 'You'}
           </ThemedText>
           <Pressable
             accessibilityRole="button"
@@ -119,13 +141,16 @@ export function AnswerBubble({
             style={({ pressed }) => [
               styles.bubble,
               styles.bubbleOwn,
+              { backgroundColor: tint, borderColor: tint },
               answer.timedOut && styles.bubbleSilent,
               pressed && canReply && styles.bubblePressed,
             ]}>
-            {replyTo ? <Quote answer={replyTo} author={replyToAuthor} onOwnBubble /> : null}
+            {replyTo ? (
+              <Quote answer={replyTo} author={replyToAuthor} onOwnBubble ink={ink} />
+            ) : null}
             <ThemedText
               type="body"
-              style={answer.timedOut ? styles.silentText : styles.ownText}>
+              style={answer.timedOut ? styles.silentText : [styles.ownText, { color: ink }]}>
               {body}
             </ThemedText>
           </Pressable>
@@ -137,12 +162,14 @@ export function AnswerBubble({
   return (
     <View style={styles.row}>
       <View style={styles.gutter}>
-        {author ? <Avatar id={author.id} name={author.name} size={30} /> : null}
+        {author ? (
+          <Avatar id={author.id} name={author.name} tint={author.tint} size={AVATAR} />
+        ) : null}
       </View>
 
       <View style={styles.bubbleColumn}>
         {author ? (
-          <ThemedText type="label" style={{ color: colorForId(author.id) }}>
+          <ThemedText type="label" style={{ color: author.tint || colorForId(author.id) }}>
             {author.name}
           </ThemedText>
         ) : null}
@@ -184,7 +211,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   gutter: {
-    width: 30,
+    width: AVATAR,
   },
   bubbleColumn: {
     flexShrink: 1,
@@ -218,8 +245,8 @@ const styles = StyleSheet.create({
   /** Matches the avatar gutter on the other side, so the row stays balanced. */
   replyButton: {
     alignSelf: 'center',
-    width: 30,
-    height: 30,
+    width: AVATAR,
+    height: AVATAR,
     borderRadius: Radius.pill,
     backgroundColor: Colors.backgroundElement,
     alignItems: 'center',

@@ -24,22 +24,6 @@ export function shuffledPrompts() {
   return [...PROMPTS].sort(() => Math.random() - 0.5);
 }
 
-/** Stand-ins for the strangers the matchmaker seats you with. */
-const STRANGER_NAMES = [
-  'Mara',
-  'Deniz',
-  'Kofi',
-  'Sasha',
-  'Jonas',
-  'Priya',
-  'Emil',
-  'Nadia',
-  'Tomas',
-  'Ines',
-  'Rune',
-  'Ayla',
-];
-
 /**
  * Filler answers. Deliberately vague — they have to read as plausible for any
  * prompt until a model is actually writing the impostor's turns.
@@ -89,14 +73,18 @@ export function makeSessionId() {
 }
 
 /**
- * The strangers for one match. Names are drawn without repeats so the room
- * doesn't seat two people with the same handle.
+ * The strangers for one match.
+ *
+ * Seats, not people: no name and no colour, because naming is the room's job
+ * and not the matchmaker's. `matchedRoom` deals every seat its colour at once,
+ * once your own seat is in the order - which is the only moment the full room
+ * exists, and so the only moment a draw can be sure it has no duplicates.
  */
 export function mockStrangers(count: number): Player[] {
-  const names = [...STRANGER_NAMES].sort(() => Math.random() - 0.5).slice(0, count);
-  return names.map((name) => ({
-    id: `p_${name.toLowerCase()}`,
-    name,
+  return Array.from({ length: count }, () => ({
+    id: makeId('p'),
+    name: '',
+    tint: '',
     isYou: false,
     connected: true,
     eliminated: false,

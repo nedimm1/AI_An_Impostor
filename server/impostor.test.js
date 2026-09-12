@@ -1345,3 +1345,59 @@ describe('a message that has come apart', () => {
     }
   });
 });
+
+describe('names as the room actually types them', () => {
+  const { mentionsAnyName } = require('./impostor');
+
+  it('finds the colour on its own, which is the only way anybody types it', () => {
+    expect(mentionsAnyName('pink is being weird', ['Mr. Pink'])).toBe(true);
+    expect(mentionsAnyName('i think Teal did it', ['Mr. Teal'])).toBe(true);
+  });
+
+  it('still finds the full seat name', () => {
+    expect(mentionsAnyName('Mr. Pink is being weird', ['Mr. Pink'])).toBe(true);
+  });
+
+  it('leaves alone a line that names nobody in the room', () => {
+    expect(mentionsAnyName('pink is being weird', ['Mr. Teal', 'Mr. Olive'])).toBe(false);
+  });
+
+  it('over-matches an ordinary use of the word, which is the known trade', () => {
+    // Documented rather than desired — see the note on namePattern. A spare
+    // rewrite is the cheap direction to be wrong in; if this ever costs turns
+    // the fix is a context test, not a narrower pattern.
+    expect(mentionsAnyName('green tea, every morning', ['Mr. Green'])).toBe(true);
+  });
+});
+
+describe('the name behind the handle', () => {
+  const { nameFor, FIRST_NAMES } = require('./impostor');
+
+  it('gives a room the same name every time it is asked', () => {
+    // Nothing stores this; every call in the match has to arrive at it alone.
+    expect(nameFor('rm_abc')).toBe(nameFor('rm_abc'));
+  });
+
+  it('is a first name and nothing else', () => {
+    expect(FIRST_NAMES.every((n) => /^[A-Z][a-z]+$/.test(n))).toBe(true);
+  });
+
+  it('is not the seat colour, which is the answer it exists to replace', () => {
+    const colours = ['Red', 'Gold', 'Teal', 'Pink', 'Blue', 'Silver', 'Crimson'];
+    expect(FIRST_NAMES.some((n) => colours.includes(n))).toBe(false);
+  });
+
+  it('spreads across the pool rather than favouring one name', () => {
+    const seen = new Set();
+    for (let i = 0; i < 4000; i++) seen.add(nameFor(`rm_${i.toString(36)}`));
+    expect(seen.size).toBe(FIRST_NAMES.length);
+  });
+
+  it('does not move with the bit, which is drawn off the same room', () => {
+    // Salted apart on purpose: a room that picks both together is a room the
+    // pair can be learned from.
+    const rooms = Array.from({ length: 400 }, (_, i) => `rm_${i.toString(36)}`);
+    const pairs = new Set(rooms.map((r) => `${nameFor(r)}`));
+    expect(pairs.size).toBeGreaterThan(10);
+  });
+});

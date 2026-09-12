@@ -15,7 +15,7 @@
 import type { Room } from './types';
 
 /**
- * Something you do. Only ever about you — there is no intent for "Mara votes",
+ * Something you do. Only ever about you — there is no intent for "Mr. Red votes",
  * because that is not yours to say.
  */
 export type Intent =

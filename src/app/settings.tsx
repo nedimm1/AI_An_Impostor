@@ -5,14 +5,10 @@ import { ThemedText } from '@/components/themed-text';
 import { Card, Divider } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { TextField } from '@/components/ui/text-field';
 import { Colors, Spacing } from '@/constants/theme';
-import { useRoomStore } from '@/game/store';
 
 export default function SettingsScreen() {
-  const { displayName, setName } = useRoomStore();
-
-  // The name is persisted; these three are not wired to anything yet.
+  // None of these are wired to anything yet.
   const [sound, setSound] = useState(true);
   const [haptics, setHaptics] = useState(true);
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -22,15 +18,6 @@ export default function SettingsScreen() {
       <ScreenHeader title="Settings" />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <TextField
-          label="Display name"
-          value={displayName}
-          onChangeText={setName}
-          placeholder="Not set"
-          maxLength={16}
-          hint="Shown to everyone in the room. Saved on this device."
-        />
-
         <Card title="Preferences" padded={false}>
           <ToggleRow label="Sound effects" value={sound} onChange={setSound} />
           <Divider />

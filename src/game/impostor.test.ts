@@ -24,10 +24,16 @@ function withFixedRandom<T>(value: number, run: () => T): T {
   }
 }
 
+/**
+ * Seats, identified by id only. The names passed in survive as ids and nothing
+ * else — `startMatch` deals every seat its own colour, so whatever a fixture
+ * calls somebody is gone by the time the room exists.
+ */
 function strangers(...names: string[]): Player[] {
   return names.map((name) => ({
     id: `p_${name.toLowerCase()}`,
-    name,
+    name: '',
+    tint: '',
     isYou: false,
     connected: true,
     eliminated: false,
@@ -47,8 +53,7 @@ function seated(): Room {
         type: 'startMatch',
         id: 'rm_test',
         yourId: YOUR_ID,
-        yourName: 'Nedim',
-        strangers: strangers('Mara', 'Deniz', 'Kofi', 'Ines'),
+          strangers: strangers('Mara', 'Deniz', 'Kofi', 'Ines'),
       })
     )
   );
@@ -96,7 +101,7 @@ describe('what the impostor is told', () => {
 
     const names = impostorTurn(state).stillIn;
     expect(names).not.toContain(gone.name);
-    expect(names).toContain('Nedim');
+    expect(names).toContain(state.players.find((p) => p.id === YOUR_ID)?.name);
   });
 
   it('sends the name the room already sees on its seat', () => {
@@ -217,7 +222,7 @@ describe('what the impostor is told when it votes', () => {
       state.players.find((p) => p.id === state.impostorId)?.name
     );
     expect(names).toHaveLength(survivors(state).length - 1);
-    expect(names).toContain('Nedim');
+    expect(names).toContain(state.players.find((p) => p.id === YOUR_ID)?.name);
   });
 
   it('drops anybody who has gone, however they went', () => {

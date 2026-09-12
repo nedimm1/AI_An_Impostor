@@ -63,7 +63,6 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
       type: 'startMatch',
       id,
       yourId: current.playerId,
-      yourName: current.displayName,
       strangers,
     });
   }, []);
@@ -187,13 +186,6 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
     }
     dispatch(action);
   }, []);
-
-  // Your name follows you into a room you are already sitting in.
-  const displayName = profile?.displayName;
-  useEffect(() => {
-    if (displayName === undefined) return;
-    dispatch({ type: 'rename', name: displayName });
-  }, [displayName]);
 
   return useMemo(
     () => ({ room, matchmaking, findMatch, send }),

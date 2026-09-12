@@ -106,7 +106,9 @@ async function main() {
   const limit = Math.min(cli.limit ? Number(cli.limit) : prompts.length, prompts.length);
   // The game gets the name off the seat the matchmaker gave it; a sample has
   // no seat, so one is picked here purely so the output has somebody in it.
-  const NAMES = ['Deniz', 'Mara', 'Kofi', 'Ines', 'Rune', 'Priya'];
+  // The room deals colours now (`src/game/seats.ts`), so the sample sits in one
+  // rather than inventing a name the game would never hand out.
+  const NAMES = ['Mr. Red', 'Mr. Teal', 'Mr. Olive', 'Mr. Pink', 'Mr. Blue', 'Mr. Silver'];
   const index =
     cli.persona !== undefined
       ? Number(cli.persona) % PERSONAS.length
