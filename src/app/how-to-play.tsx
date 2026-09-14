@@ -97,7 +97,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   badgeText: {
-    color: Colors.accent,
+    color: Colors.accentText,
   },
   stepBody: {
     flex: 1,

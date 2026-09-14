@@ -219,7 +219,9 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   ownLabel: {
-    color: Colors.accent,
+    // Overridden by the seat's own tint; this is the fallback for a seat
+    // with none, and has to read as a label rather than fill anything.
+    color: Colors.accentText,
     alignSelf: 'flex-end',
   },
   bubble: {
@@ -265,7 +267,7 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   replyGlyphActive: {
-    color: Colors.accent,
+    color: Colors.accentText,
   },
   quote: {
     alignSelf: 'stretch',

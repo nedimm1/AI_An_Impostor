@@ -7,7 +7,7 @@ export type PillTone = 'neutral' | 'accent' | 'success' | 'danger' | 'warning';
 
 const tones: Record<PillTone, { bg: string; fg: string }> = {
   neutral: { bg: Colors.backgroundSelected, fg: Colors.textSecondary },
-  accent: { bg: Colors.accentMuted, fg: Colors.accent },
+  accent: { bg: Colors.accentMuted, fg: Colors.accentText },
   success: { bg: Colors.successMuted, fg: Colors.success },
   danger: { bg: Colors.dangerMuted, fg: Colors.danger },
   warning: { bg: Colors.warningMuted, fg: Colors.warning },

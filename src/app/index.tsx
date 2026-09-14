@@ -1,41 +1,25 @@
 import { Link, useRouter } from 'expo-router';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { SEAT_COLOURS, seatName } from '@/game/seats';
 import { countWord, DEFAULT_SETTINGS } from '@/game/types';
 
 /**
- * Decorative lineup — a room's worth of "players", one of them unreadable.
- * Sized off the settings so the picture on the front page is the room you are
- * actually put in, whatever the matchmaker is set to seat.
+ * The mark: a ring of misters around the one that is not a person. It took the
+ * place of a row of seat avatars with a question mark in the middle, which was
+ * the same idea drawn by hand.
+ *
+ * The PNG's black ground is blended into `Colors.background` when the asset is
+ * made, so it sits on the page without a visible square. Replace the file with
+ * one that has a different ground and that edge will show.
  */
-const LINEUP_COLOURS = ['Red', 'Green', 'Olive', 'Pink', 'Blue', 'Silver', 'Violet'];
-const LINEUP = Array.from({ length: DEFAULT_SETTINGS.playerCount }, (_, i) => {
-  const colour = SEAT_COLOURS.find((c) => c.name === LINEUP_COLOURS[i % LINEUP_COLOURS.length]);
-  return {
-    id: `lineup-${i}`,
-    // Drawn from the real pool so the front page advertises the room you are
-    // actually put in, tints included. Exactly one seat is unreadable, and it
-    // is the slot below — a second mystery avatar in the row reads as a bug.
-    name: colour ? seatName(colour) : '',
-    tint: colour?.tint ?? '',
-  };
-});
+const LOGO = require('../../assets/images/logo.png');
 
-/**
- * How big a seat is on the front page. The unreadable slot is drawn as its own
- * view rather than an Avatar, so it has to be told the same number or the row
- * comes out with one seat smaller than the rest.
- */
-const LINEUP_SIZE = 52;
-
-/** Which slot in the lineup is the one you cannot read — always the middle. */
-const IMPOSTOR_SLOT = Math.floor(DEFAULT_SETTINGS.playerCount / 2);
+/** Wide enough to read the robot in the middle, narrow enough to leave the wordmark room. */
+const LOGO_SIZE = 220;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -46,19 +30,13 @@ export default function HomeScreen() {
   return (
     <Screen>
       <View style={styles.hero}>
-        <View style={styles.lineup}>
-          {LINEUP.map((p, i) =>
-            i === IMPOSTOR_SLOT ? (
-              <View key={p.id} style={styles.impostorSlot}>
-                <ThemedText type="subtitle" style={styles.impostorGlyph}>
-                  ?
-                </ThemedText>
-              </View>
-            ) : (
-              <Avatar key={p.id} id={p.id} name={p.name} tint={p.tint} size={LINEUP_SIZE} />
-            )
-          )}
-        </View>
+        <Image
+          source={LOGO}
+          style={styles.logo}
+          resizeMode="contain"
+          accessibilityRole="image"
+          accessibilityLabel="An Impostor"
+        />
 
         <View style={styles.wordmark}>
           <ThemedText type="display" style={styles.title}>
@@ -105,25 +83,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.five,
   },
-  lineup: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: Spacing.two,
-  },
-  impostorSlot: {
-    width: LINEUP_SIZE,
-    height: LINEUP_SIZE,
-    borderRadius: Radius.pill,
-    backgroundColor: Colors.dangerMuted,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: Colors.danger,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  impostorGlyph: {
-    color: Colors.danger,
+  logo: {
+    width: LOGO_SIZE,
+    height: LOGO_SIZE,
+    maxWidth: '100%',
   },
   wordmark: {
     gap: Spacing.three,

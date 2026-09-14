@@ -70,7 +70,7 @@ const labelColor: Record<ButtonVariant, string> = {
   primary: Colors.textOnAccent,
   secondary: Colors.text,
   ghost: Colors.textSecondary,
-  danger: Colors.textOnAccent,
+  danger: Colors.textOnDanger,
 };
 
 const styles = StyleSheet.create({

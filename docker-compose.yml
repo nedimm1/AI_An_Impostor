@@ -1,0 +1,46 @@
+# The impostor proxy in a container.
+#
+#   docker compose up --build
+#
+# It reads the same `.env` the local run does, so there is one place the key
+# lives and no second copy to drift. Everything else has a default that matches
+# what `npm run impostor:server` would give you.
+
+services:
+  impostor:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: an-impostor-server
+
+    # The whole file, so OPENROUTER_MODEL and the routing variables come along
+    # with the key rather than having to be listed twice. The EXPO_PUBLIC_*
+    # entries in there are ignored by the server — they are the app's.
+    env_file:
+      - .env
+
+    environment:
+      # Named explicitly so the container has a port even with no .env at all,
+      # and so the mapping below cannot silently disagree with it.
+      IMPOSTOR_PORT: 8787
+
+    ports:
+      # Host 8787 is what the Android emulator already reaches through
+      # `adb reverse tcp:8787 tcp:8787`, so nothing on the app side changes.
+      - "${IMPOSTOR_PORT:-8787}:8787"
+
+    # The server prints a session cost report on SIGTERM, so give it a moment
+    # to do that rather than killing it at the default 10s.
+    stop_grace_period: 20s
+
+    restart: unless-stopped
+
+    healthcheck:
+      # `/health` exists for exactly this — the app checks it before starting a
+      # match so a room does not discover the server is down on the impostor's
+      # first turn. wget is in busybox; there is no curl in the alpine image.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8787/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3

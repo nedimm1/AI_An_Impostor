@@ -1,0 +1,24 @@
+# The image carries `server/` and nothing else, so everything here is either
+# irrelevant to it or actively unwanted in a build context.
+node_modules
+.git
+.expo
+.vscode
+android
+ios
+dist
+build
+assets
+src
+scripts
+app.json
+package*.json
+tsconfig.json
+eslint.config.js
+*.png
+*.jpg
+
+# Never. The key goes in as an environment variable at run time, not baked
+# into a layer where `docker history` can read it back out.
+.env
+.env.*
