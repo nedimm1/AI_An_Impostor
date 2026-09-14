@@ -20,12 +20,15 @@
  * different formats would mark out which seat is not a person without anyone
  * reading a word. What each person is sent is filtered again in `view.ts`.
  *
- * WHAT IS NOT HERE YET, deliberately, because each is its own step:
- * - a player whose connection drops keeps their seat and simply runs out of
- *   time on their turns, the same as putting the phone down. Proper reconnect
- *   handling is step 4.
- * - the stand-ins do not walk out at random the way they do on one device.
- *   With real people in the room, real walkouts are the ones that matter.
+ * EVERY SEAT BUT ONE IS A PERSON. A room is as many people as the lobby found,
+ * plus the impostor — no stand-ins filling the gaps, because stock lines are
+ * spotted in a round and a room of obvious fakes is not a room hunting one
+ * hidden one. See `lobby.ts` for how big a room gets.
+ *
+ * WHAT IS NOT HERE YET, deliberately, because it is its own step: a player
+ * whose connection drops keeps their seat and simply runs out of time on their
+ * turns, the same as putting the phone down. Proper reconnect handling is
+ * step 4.
  */
 
 import {
@@ -36,7 +39,7 @@ import {
   voteDelay,
 } from '../../src/game/humanlike';
 import { impostorBallot, impostorTurn } from '../../src/game/impostor-payload';
-import { makeId, makeSessionId, mockAnswer, mockStrangers } from '../../src/game/mock';
+import { makeId, makeSessionId, mockAnswer } from '../../src/game/mock';
 import { roomReducer, type MatchAction } from '../../src/game/reducer';
 import type { Intent } from '../../src/game/transport';
 import {
@@ -131,9 +134,9 @@ export class Match {
     private readonly onEnd: (match: Match) => void
   ) {
     if (humanIds.length === 0) throw new Error('a match needs at least one person');
-    const seats = DEFAULT_SETTINGS.playerCount;
-    if (humanIds.length > seats - 1) {
-      throw new Error(`${humanIds.length} people for ${seats} seats — one seat is the impostor`);
+    const fullRoom = DEFAULT_SETTINGS.playerCount - 1;
+    if (humanIds.length > fullRoom) {
+      throw new Error(`${humanIds.length} people for a room of ${fullRoom} — one seat is the impostor`);
     }
 
     // A seat for each person, from the same generator `mockStrangers` uses for
@@ -142,23 +145,23 @@ export class Match {
     const seatIds = humanIds.map((id) => this.seatOf.get(id)!);
     this.humanSeats = new Set(seatIds);
 
-    // The other people's seats are drawn exactly like stand-ins: no name and no
-    // colour, because the room deals those. The reducer is told which seats are
-    // people so the impostor is never one of them.
-    const otherPeople: Player[] = seatIds.slice(1).map((id) => ({
+    // The other people's seats, plus exactly one more for the impostor. No name
+    // and no colour on any of them, because the room deals those. The reducer
+    // is told which seats are people, so the one that is not is the impostor.
+    const unnamed = (id: string): Player => ({
       id,
       name: '',
       tint: '',
       isYou: false,
       connected: true,
       eliminated: false,
-    }));
+    });
 
     const started = roomReducer(null, {
       type: 'startMatch',
       id: makeSessionId(),
       yourId: seatIds[0],
-      strangers: [...otherPeople, ...mockStrangers(seats - humanIds.length)],
+      strangers: [...seatIds.slice(1).map(unnamed), unnamed(makeId('p'))],
       humanIds: seatIds,
     });
     if (!started) throw new Error('the room did not start');
@@ -337,7 +340,7 @@ export class Match {
     if (ballotKey) this.seatVotes(ballotKey);
   }
 
-  /** A stand-in's or the impostor's turn. Port of `useBotTurns`. */
+  /** The impostor's turn. Port of `useBotTurns`, for the one seat that is not a person. */
   private seatTurn(turnKey: string) {
     const room = this.room;
     const seatId = currentTurnId(room);
@@ -364,10 +367,7 @@ export class Match {
       );
     };
 
-    if (seatId !== room.impostorId) {
-      send(mockAnswer(), true);
-      return;
-    }
+    if (seatId !== room.impostorId) return;
 
     // The model, straight from here — no phone asking over HTTP any more.
     // Anything that fails or runs long falls back to a stock line, because
@@ -378,7 +378,7 @@ export class Match {
     );
   }
 
-  /** Every non-human seat's vote. Port of `useStrangerVotes`. */
+  /** The impostor's vote. Port of `useStrangerVotes`, for the one seat that is not a person. */
   private seatVotes(ballotKey: string) {
     const opened = this.room;
     const windowMs = opened.settings.voteSeconds * 1000;

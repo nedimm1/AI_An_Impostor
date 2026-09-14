@@ -5,15 +5,15 @@ import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { countWord, DEFAULT_SETTINGS } from '@/game/types';
+import { DEFAULT_SETTINGS } from '@/game/types';
 
-const { playerCount, turnsEach, answerSeconds, tiebreakerTurns, tiebreakerTurnsAccused } =
+const { turnsEach, answerSeconds, tiebreakerTurns, tiebreakerTurnsAccused } =
   DEFAULT_SETTINGS;
 
 const STEPS = [
   {
     title: 'You get matched with strangers',
-    body: `Tap find a game and the matchmaker seats you in a chatroom with ${countWord(playerCount - 1)} people you have never met. Nothing to create, nobody to invite.`,
+    body: `Pick a room of 3, 4 or 5 and tap find a game. The matchmaker seats you in a chatroom with people you have never met. Nothing to create, nobody to invite.`,
   },
   {
     title: 'One of them is not a person',

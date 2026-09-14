@@ -14,11 +14,11 @@ import { useRoomStore } from '@/game/store';
  */
 export default function QueueScreen() {
   const router = useRouter();
-  const { matchmaking, findMatch, room, send } = useRoomStore();
+  const { matchmaking, findMatch, room, send, roomSize } = useRoomStore();
 
   // Asking to be seated is all this screen does. Who the strangers are, how
   // long they take and when the room opens are not its business.
-  useEffect(findMatch, [findMatch]);
+  useEffect(() => findMatch(roomSize), [findMatch, roomSize]);
 
   // The room turning up is the only signal that the wait is over.
   const roomId = room?.id;
@@ -29,7 +29,8 @@ export default function QueueScreen() {
   }, [roomId, router]);
 
   const found = matchmaking?.found ?? 1;
-  const total = matchmaking?.total ?? 7;
+  // Counted in people, not seats — the impostor's seat is never waited for.
+  const total = matchmaking?.total ?? roomSize - 1;
 
   const handleCancel = () => {
     // Out of the queue, not just off the screen. Online, leaving the screen

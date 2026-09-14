@@ -12,7 +12,7 @@
  * now means a server does not change a single screen.
  */
 
-import type { Room } from './types';
+import type { Room, RoomSize } from './types';
 
 /**
  * Something you do. Only ever about you — there is no intent for "Mr. Red votes",
@@ -52,8 +52,8 @@ export type MatchTransport = {
   room: Room | null;
   /** Non-null while the matchmaker is seating you. */
   matchmaking: Matchmaking | null;
-  /** Ask to be put in a room. */
-  findMatch: () => void;
+  /** Ask to be put in a room of this many seats, the impostor's included. */
+  findMatch: (size: RoomSize) => void;
   /** Do something. Quietly ignored when it is not yours to do. */
   send: (intent: Intent) => void;
 };

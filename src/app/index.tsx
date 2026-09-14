@@ -1,11 +1,13 @@
 import { Link, useRouter } from 'expo-router';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 
+import { RoomSizePicker } from '@/components/game/room-size-picker';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
-import { countWord, DEFAULT_SETTINGS } from '@/game/types';
+import { useRoomStore } from '@/game/store';
+import { countWord } from '@/game/types';
 
 /**
  * The mark: a ring of misters around the one that is not a person. It took the
@@ -23,8 +25,9 @@ const LOGO_SIZE = 220;
 
 export default function HomeScreen() {
   const router = useRouter();
-  // Nothing stands between the button and the queue. There is no name to pick
-  // — the room deals you one when it seats you (`seats.ts`).
+  const { roomSize, setRoomSize } = useRoomStore();
+  // The size is picked right here, so the button goes straight to the queue.
+  // There is no name to pick either — the room deals one when it seats you.
   const handlePlay = () => router.push('/queue');
 
   return (
@@ -43,13 +46,14 @@ export default function HomeScreen() {
             An Impostor
           </ThemedText>
           <ThemedText type="body" themeColor="textSecondary" style={styles.tagline}>
-            You and {countWord(DEFAULT_SETTINGS.playerCount - 1)} strangers in a chatroom. One of
-            them isn&apos;t a person. Vote it out before it outlasts you.
+            You and {countWord(roomSize - 1)} strangers in a chatroom. One of them isn&apos;t a
+            person. Vote it out before it outlasts you.
           </ThemedText>
         </View>
       </View>
 
       <View style={styles.actions}>
+        <RoomSizePicker value={roomSize} onChange={setRoomSize} />
         <Button label="Find a game" onPress={handlePlay} />
 
         <View style={styles.footerLinks}>
@@ -100,7 +104,7 @@ const styles = StyleSheet.create({
     maxWidth: 340,
   },
   actions: {
-    gap: Spacing.two,
+    gap: Spacing.three,
     paddingBottom: Spacing.four,
   },
   footerLinks: {

@@ -11,7 +11,7 @@
  * `store.tsx` builds; no screen and no rule has to move.
  */
 
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 
 import { useResumeSignal } from '@/hooks/use-app-state';
 
@@ -23,7 +23,7 @@ import type { Profile } from './profile';
 import { roomReducer, type MatchAction } from './reducer';
 import { TEST_MODE } from './testing';
 import type { Intent, MatchTransport } from './transport';
-import { DEFAULT_SETTINGS, type Room } from './types';
+import type { Room, RoomSize } from './types';
 
 /**
  * How long past a deadline the room waits before enforcing it. Your own clock
@@ -53,6 +53,8 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
   profileRef.current = profile;
 
   const searchingRef = useRef(false);
+  /** The room size asked for. Offline it only decides how many stand-ins are seated. */
+  const [size, setSize] = useState<RoomSize>(5);
   const [, forceRender] = useReducer((n: number) => n + 1, 0);
 
   const onMatched = useCallback(({ id, strangers }: Match) => {
@@ -68,12 +70,13 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
   }, []);
 
   const matchmaking = useMatchmaking(
-    DEFAULT_SETTINGS.playerCount,
+    size,
     searchingRef.current && room === null,
     onMatched
   );
 
-  const findMatch = useCallback(() => {
+  const findMatch = useCallback((requested: RoomSize) => {
+    setSize(requested);
     searchingRef.current = true;
     forceRender();
   }, []);

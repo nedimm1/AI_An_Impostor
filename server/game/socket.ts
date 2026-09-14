@@ -16,6 +16,7 @@ import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { GAME_PATH, type ClientMessage, type ServerMessage } from '../../src/game/protocol';
+import { isRoomSize } from '../../src/game/types';
 
 import { Lobby } from './lobby';
 import type { ImpostorModel } from './match';
@@ -91,8 +92,9 @@ export function attachGame(server: Server, model: ImpostorModel) {
 
         console.log(`  game  ${playerId.slice(0, 8)} connected`);
         sendRoom(playerId);
-        if (lobby.isWaiting(playerId)) {
-          send(playerId, { type: 'matchmaking', matchmaking: lobby.progress() });
+        const queuedFor = lobby.queuedFor(playerId);
+        if (queuedFor !== null) {
+          send(playerId, { type: 'matchmaking', matchmaking: lobby.progress(queuedFor) });
         }
         return;
       }
@@ -105,7 +107,10 @@ export function attachGame(server: Server, model: ImpostorModel) {
           sendRoom(playerId);
           return;
         }
-        lobby.join(playerId);
+        // Only the sizes the game offers. Anything else is not a request a
+        // real phone makes.
+        if (!isRoomSize(message.seats)) return;
+        lobby.join(playerId, message.seats);
         return;
       }
 

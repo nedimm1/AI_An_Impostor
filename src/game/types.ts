@@ -191,6 +191,23 @@ export type Room = {
   settings: MatchSettings;
 };
 
+/**
+ * How many seats a room has, the impostor's included. Chosen by the player
+ * before they queue, and only ever one of these.
+ *
+ * Three is the smallest that is a game at all: two people and the impostor,
+ * so each person knows the model is one of exactly two other seats and the
+ * first vote decides the match. It plays as a duel rather than a hunt, which
+ * is a legitimate thing to want — it is just a different game from five.
+ */
+export type RoomSize = 3 | 4 | 5;
+
+export const ROOM_SIZES: readonly RoomSize[] = [3, 4, 5];
+
+export function isRoomSize(value: unknown): value is RoomSize {
+  return ROOM_SIZES.includes(value as RoomSize);
+}
+
 export const DEFAULT_SETTINGS: MatchSettings = {
   playerCount: 5,
   answerSeconds: 40,

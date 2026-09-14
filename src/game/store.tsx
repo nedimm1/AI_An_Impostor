@@ -20,6 +20,7 @@ import { useLocalTransport } from './local-transport';
 import { loadProfile, saveProfile, type Profile } from './profile';
 import { GAME_URL, useRemoteTransport } from './remote-transport';
 import type { MatchTransport } from './transport';
+import type { RoomSize } from './types';
 
 /**
  * Online when a game server is configured, on this device when it is not.
@@ -36,6 +37,13 @@ const SAVE_DEBOUNCE_MS = 400;
 type RoomContextValue = MatchTransport & {
   /** False until the stored profile has been read back. */
   hydrated: boolean;
+  /**
+   * The room size picked on the home screen, which the queue asks for. Kept
+   * here rather than passed between screens so "Find another game" at the end
+   * of a match asks for the same size without anyone having to carry it.
+   */
+  roomSize: RoomSize;
+  setRoomSize: (size: RoomSize) => void;
 };
 
 const RoomContext = createContext<RoomContextValue | null>(null);
@@ -67,12 +75,17 @@ export function RoomProvider({ children }: PropsWithChildren) {
 
   const transport = useTransport(profile);
 
+  // Five by default: the full game, and the one the rules were tuned for.
+  const [roomSize, setRoomSize] = useState<RoomSize>(5);
+
   const value = useMemo(
     () => ({
       ...transport,
       hydrated: profile !== null,
+      roomSize,
+      setRoomSize,
     }),
-    [transport, profile]
+    [transport, profile, roomSize]
   );
 
   return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>;

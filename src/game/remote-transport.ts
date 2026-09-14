@@ -2,7 +2,7 @@
  * The match, run on the game server.
  *
  * The same `MatchTransport` the screens already use, with the other side moved
- * off the phone: the rules, the clocks, the stand-ins and the impostor all run
+ * off the phone: the rules, the clocks and the impostor all run
  * in `server/game/`. This file only carries messages — it sends what you do
  * and holds the room the server last sent — so no screen changes to go online.
  *
@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Profile } from './profile';
 import type { ClientMessage, ServerMessage } from './protocol';
 import type { Intent, Matchmaking, MatchTransport } from './transport';
-import type { Room } from './types';
+import type { Room, RoomSize } from './types';
 
 export const GAME_URL = process.env.EXPO_PUBLIC_GAME_URL ?? '';
 
@@ -47,8 +47,8 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
   const [matchmaking, setMatchmaking] = useState<Matchmaking | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
-  /** Whether you asked for a match, so a reconnect can put you back in the queue. */
-  const wantsMatchRef = useRef(false);
+  /** The room size you queued for, so a reconnect can put you back in that queue. Null when not queueing. */
+  const wantsMatchRef = useRef<RoomSize | null>(null);
 
   const playerId = profile?.playerId ?? null;
 
@@ -73,8 +73,10 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
         socket.send(JSON.stringify({ type: 'hello', playerId } satisfies ClientMessage));
         // Dropped while queueing: ask again. The server ignores it if you are
         // already in a match, and sends that match instead.
-        if (wantsMatchRef.current) {
-          socket.send(JSON.stringify({ type: 'findMatch' } satisfies ClientMessage));
+        if (wantsMatchRef.current !== null) {
+          socket.send(
+            JSON.stringify({ type: 'findMatch', seats: wantsMatchRef.current } satisfies ClientMessage)
+          );
         }
       };
 
@@ -87,7 +89,7 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
         }
 
         if (message.type === 'room') {
-          if (message.room) wantsMatchRef.current = false;
+          if (message.room) wantsMatchRef.current = null;
           setRoom(message.room ? onLocalClock(message.room, message.serverNow) : null);
         } else if (message.type === 'matchmaking') {
           setMatchmaking(message.matchmaking);
@@ -112,10 +114,13 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
     };
   }, [playerId]);
 
-  const findMatch = useCallback(() => {
-    wantsMatchRef.current = true;
-    post({ type: 'findMatch' });
-  }, [post]);
+  const findMatch = useCallback(
+    (size: RoomSize) => {
+      wantsMatchRef.current = size;
+      post({ type: 'findMatch', seats: size });
+    },
+    [post]
+  );
 
   const send = useCallback(
     (intent: Intent) => {
@@ -125,7 +130,7 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
         // queue treats any room it can see as a match to jump into — so a
         // stale one arriving a moment late would put you straight back in the
         // game you just left.
-        wantsMatchRef.current = false;
+        wantsMatchRef.current = null;
         setRoom(null);
         setMatchmaking(null);
       }

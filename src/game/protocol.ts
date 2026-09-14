@@ -13,7 +13,7 @@
  */
 
 import type { Intent, Matchmaking } from './transport';
-import type { Room } from './types';
+import type { Room, RoomSize } from './types';
 
 /** Phone → server. */
 export type ClientMessage =
@@ -23,8 +23,8 @@ export type ClientMessage =
    * same player rather than a new one.
    */
   | { type: 'hello'; playerId: string }
-  /** Put me in the queue. */
-  | { type: 'findMatch' }
+  /** Put me in the queue for a room of this many seats. */
+  | { type: 'findMatch'; seats: RoomSize }
   /** Something my player does in the room. */
   | { type: 'intent'; intent: Intent };
 
