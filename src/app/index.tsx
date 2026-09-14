@@ -25,7 +25,7 @@ const LOGO_SIZE = 220;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { roomSize, setRoomSize } = useRoomStore();
+  const { roomSize, setRoomSize, notice, dismissNotice } = useRoomStore();
   // The size is picked right here, so the button goes straight to the queue.
   // There is no name to pick either — the room deals one when it seats you.
   const handlePlay = () => router.push('/queue');
@@ -53,6 +53,21 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.actions}>
+        {notice === 'removedForBeingAway' ? (
+          // Landing back on the home screen mid-match with no explanation reads
+          // as the app having crashed. This says what actually happened.
+          <Pressable
+            accessibilityRole="button"
+            accessibilityHint="Dismiss"
+            onPress={dismissNotice}
+            style={({ pressed }) => [styles.notice, pressed && styles.pressed]}>
+            <ThemedText type="smallBold">You were away too long</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Your connection was gone for too long, so the match carried on without you. Tap to
+              dismiss.
+            </ThemedText>
+          </Pressable>
+        ) : null}
         <RoomSizePicker value={roomSize} onChange={setRoomSize} />
         <Button label="Find a game" onPress={handlePlay} />
 
@@ -106,6 +121,14 @@ const styles = StyleSheet.create({
   actions: {
     gap: Spacing.three,
     paddingBottom: Spacing.four,
+  },
+  notice: {
+    gap: Spacing.one,
+    padding: Spacing.three,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.warning,
+    backgroundColor: Colors.warningMuted,
   },
   footerLinks: {
     flexDirection: 'row',

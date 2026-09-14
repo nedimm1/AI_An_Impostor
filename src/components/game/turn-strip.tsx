@@ -8,6 +8,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
+import { ReconnectTimer } from '@/components/game/reconnect-timer';
 import { Avatar } from '@/components/ui/avatar';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { seatShortName } from '@/game/seats';
@@ -85,14 +86,19 @@ function Seat({
         rather than emphasis.
       */}
       <Animated.View style={[styles.head, style]}>
-        <Avatar
-          id={player.id}
-          name={player.name}
-          tint={player.tint}
-          size={WAITING}
-          dimmed={state === 'spent'}
-          ringColor={now ? lit : undefined}
-        />
+        {player.awayUntil ? (
+          // Their connection is down: the picture becomes the seconds left.
+          <ReconnectTimer until={player.awayUntil} size={WAITING} />
+        ) : (
+          <Avatar
+            id={player.id}
+            name={player.name}
+            tint={player.tint}
+            size={WAITING}
+            dimmed={state === 'spent'}
+            ringColor={now ? lit : undefined}
+          />
+        )}
       </Animated.View>
 
       <ThemedText
@@ -100,10 +106,14 @@ function Seat({
         numberOfLines={1}
         style={[
           styles.name,
-          now ? { color: lit } : styles.nameIdle,
+          player.awayUntil ? styles.nameAway : now ? { color: lit } : styles.nameIdle,
           state === 'spent' && styles.nameSpent,
         ]}>
-        {player.isYou ? 'You' : seatShortName(player.name)}
+        {player.awayUntil
+          ? 'reconnecting…'
+          : player.isYou
+            ? 'You'
+            : seatShortName(player.name)}
       </ThemedText>
     </View>
   );
@@ -218,6 +228,9 @@ const styles = StyleSheet.create({
   },
   nameIdle: {
     color: Colors.textMuted,
+  },
+  nameAway: {
+    color: Colors.warning,
   },
   nameSpent: {
     opacity: 0.5,

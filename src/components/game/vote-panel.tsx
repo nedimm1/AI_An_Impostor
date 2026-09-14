@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { ReconnectTimer } from '@/components/game/reconnect-timer';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Pill } from '@/components/ui/pill';
@@ -95,23 +96,33 @@ export function VotePanel({
                 isSelected && styles.chipSelected,
                 pressed && !disabled && styles.chipPressed,
               ]}>
-              <Avatar
-                id={player.id}
-                name={player.name}
-                tint={player.tint}
-                size={46}
-                dimmed={player.isYou}
-                ringColor={
-                  isSelected ? Colors.accent : isAccused ? Colors.warning : undefined
-                }
-              />
+              {player.awayUntil ? (
+                // Still votable — their connection being down does not take
+                // them out of the room until the countdown ends.
+                <ReconnectTimer until={player.awayUntil} size={46} />
+              ) : (
+                <Avatar
+                  id={player.id}
+                  name={player.name}
+                  tint={player.tint}
+                  size={46}
+                  dimmed={player.isYou}
+                  ringColor={
+                    isSelected ? Colors.accent : isAccused ? Colors.warning : undefined
+                  }
+                />
+              )}
 
               <ThemedText
                 type="small"
                 numberOfLines={1}
-                themeColor={player.isYou ? 'textMuted' : 'text'}
+                themeColor={player.awayUntil ? 'warning' : player.isYou ? 'textMuted' : 'text'}
                 style={styles.name}>
-                {player.isYou ? 'You' : seatShortName(player.name)}
+                {player.awayUntil
+                  ? 'reconnecting…'
+                  : player.isYou
+                    ? 'You'
+                    : seatShortName(player.name)}
               </ThemedText>
 
               {/* Fixed height so the strip does not jump as the badge changes. */}

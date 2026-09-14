@@ -30,7 +30,13 @@
 
 import type { Room } from '../../src/game/types';
 
-export function viewFor(room: Room, seatId: string, spectating: boolean): Room {
+export function viewFor(
+  room: Room,
+  seatId: string,
+  spectating: boolean,
+  /** Seat id → when that disconnected person will be removed. See `Player.awayUntil`. */
+  awayUntil: ReadonlyMap<string, number> = new Map()
+): Room {
   const ballotOpen = room.phase === 'voting' && !room.ballotClosed;
 
   const votes: Record<string, string> = ballotOpen
@@ -42,7 +48,11 @@ export function viewFor(room: Room, seatId: string, spectating: boolean): Room {
   return {
     ...room,
     youId: seatId,
-    players: room.players.map((p) => ({ ...p, isYou: p.id === seatId })),
+    players: room.players.map((p) => ({
+      ...p,
+      isYou: p.id === seatId,
+      awayUntil: awayUntil.get(p.id) ?? null,
+    })),
     spectating,
     impostorId: room.outcome ? room.impostorId : null,
     votes,

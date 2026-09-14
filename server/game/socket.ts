@@ -15,7 +15,13 @@ import type { Server } from 'node:http';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import { GAME_PATH, type ClientMessage, type ServerMessage } from '../../src/game/protocol';
+import {
+  GAME_PATH,
+  HEARTBEAT_MS,
+  SILENCE_LIMIT_MS,
+  type ClientMessage,
+  type ServerMessage,
+} from '../../src/game/protocol';
 import { isRoomSize } from '../../src/game/types';
 
 import { Lobby } from './lobby';
@@ -67,16 +73,43 @@ export function attachGame(server: Server, model: ImpostorModel) {
 
   const wss = new WebSocketServer({ server, path: GAME_PATH, maxPayload: MAX_MESSAGE_BYTES });
 
+  /** When each connection was last heard from. */
+  const lastHeard = new WeakMap<WebSocket, number>();
+
+  /*
+   * The heartbeat. A connection that dies without closing — the phone went into
+   * a tunnel — looks exactly like a quiet player until something is sent to it.
+   * So every connection is checked in on, and one that has not answered for too
+   * long is cut: that is what turns a silent phone into a disconnected one, and
+   * starts its grace period (`Lobby.disconnected`).
+   */
+  const heartbeat = setInterval(() => {
+    const now = Date.now();
+    for (const socket of wss.clients) {
+      if (now - (lastHeard.get(socket) ?? now) > SILENCE_LIMIT_MS) {
+        socket.terminate();
+        continue;
+      }
+      if (socket.readyState === socket.OPEN) {
+        socket.send(JSON.stringify({ type: 'ping', serverNow: Date.now() } satisfies ServerMessage));
+      }
+    }
+  }, HEARTBEAT_MS);
+  wss.on('close', () => clearInterval(heartbeat));
+
   wss.on('connection', (socket) => {
     let playerId: string | null = null;
+    lastHeard.set(socket, Date.now());
 
     const helloTimer = setTimeout(() => {
       if (!playerId) socket.close(4000, 'say hello first');
     }, HELLO_TIMEOUT_MS);
 
     socket.on('message', (raw) => {
+      // Anything at all counts as being there, not only a pong.
+      lastHeard.set(socket, Date.now());
       const message = parse(raw);
-      if (!message) return;
+      if (!message || message.type === 'pong') return;
 
       if (message.type === 'hello') {
         if (playerId || typeof message.playerId !== 'string' || !PLAYER_ID.test(message.playerId)) {
@@ -91,6 +124,9 @@ export function attachGame(server: Server, model: ImpostorModel) {
         sockets.set(playerId, socket);
 
         console.log(`  game  ${playerId.slice(0, 8)} connected`);
+        if (lobby.reconnected(playerId)) {
+          send(playerId, { type: 'notice', notice: 'removedForBeingAway' });
+        }
         sendRoom(playerId);
         const queuedFor = lobby.queuedFor(playerId);
         if (queuedFor !== null) {
@@ -114,6 +150,12 @@ export function attachGame(server: Server, model: ImpostorModel) {
         return;
       }
 
+      if (message.type === 'draft') {
+        if (typeof message.text !== 'string' || typeof message.at !== 'string') return;
+        lobby.matchFor(playerId)?.draft(playerId, message.text, message.at);
+        return;
+      }
+
       if (message.type === 'intent' && message.intent && typeof message.intent === 'object') {
         const match = lobby.matchFor(playerId);
 
@@ -125,7 +167,11 @@ export function attachGame(server: Server, model: ImpostorModel) {
           return;
         }
 
-        match?.handle(playerId, message.intent);
+        match?.handle(
+          playerId,
+          message.intent,
+          typeof message.at === 'string' ? message.at : undefined
+        );
       }
     });
 
@@ -135,10 +181,8 @@ export function attachGame(server: Server, model: ImpostorModel) {
       sockets.delete(playerId);
       console.log(`  game  ${playerId.slice(0, 8)} disconnected`);
 
-      // Waiting in a queue you are not connected to is waiting for nothing.
-      // A seat in a running match is kept: a dropped connection is not a
-      // decision to leave, and the turns simply run out until they are back.
-      lobby.cancel(playerId);
+      // Out of any queue now; a seat in a match is kept for the grace period.
+      lobby.disconnected(playerId);
     });
   });
 

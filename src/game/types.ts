@@ -40,6 +40,13 @@ export type Player = {
   connected: boolean;
   /** Voted out. Still listed, but out of the turn order and the vote. */
   eliminated: boolean;
+  /**
+   * Set while this seat's connection is down during an online match: when the
+   * match will carry on without them if they are not back (on this phone's
+   * clock by the time a screen reads it). Absent or null when connected, and
+   * always absent on one device.
+   */
+  awayUntil?: number | null;
 };
 
 export type Answer = {
@@ -60,6 +67,12 @@ export type Answer = {
   text: string;
   /** True when the clock ran out before they wrote anything. */
   timedOut: boolean;
+  /**
+   * Their connection went before they could send it. With `timedOut` it means
+   * they had typed nothing; without it, `text` is what they had typed so far,
+   * put in the room for them. Absent on anything sent normally.
+   */
+  lostConnection?: boolean;
   /**
    * Written during a tiebreaker rather than in the round proper. The round's
    * own answers stay on screen through a tiebreaker, so the two need telling

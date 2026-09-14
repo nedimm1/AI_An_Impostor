@@ -37,6 +37,8 @@ function until(deadline: number) {
   return Math.max(0, deadline - Date.now() + EXPIRY_GRACE_MS);
 }
 
+const noop = () => {};
+
 export function useLocalTransport(profile: Profile | null): MatchTransport {
   const [room, dispatch] = useReducer(roomReducer, null);
 
@@ -191,7 +193,8 @@ export function useLocalTransport(profile: Profile | null): MatchTransport {
   }, []);
 
   return useMemo(
-    () => ({ room, matchmaking, findMatch, send }),
+    // Nothing to disconnect from on one device, and nothing to be told later.
+    () => ({ room, matchmaking, findMatch, send, connected: true, draft: noop, notice: null, dismissNotice: noop }),
     [room, matchmaking, findMatch, send]
   );
 }

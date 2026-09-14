@@ -40,7 +40,7 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function RoundScreen() {
   const router = useRouter();
-  const { room, send } = useRoomStore();
+  const { room, send, draft } = useRoomStore();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -353,6 +353,11 @@ export default function RoundScreen() {
         ) : (
         <Composer
           ref={composerRef}
+          onChangeText={(text) => {
+            // Online, this is what gets put in the room for you if your
+            // connection drops before you send. Only your own turn counts.
+            if (yourTurn && !out) draft(text);
+          }}
           onSend={(text) => {
             // Same box, two senders. Which one it is depends only on whose
             // turn the room is on, so there is nothing to keep in sync.

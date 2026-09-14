@@ -41,6 +41,7 @@ import {
 import { impostorBallot, impostorTurn } from '../../src/game/impostor-payload';
 import { makeId, makeSessionId, mockAnswer } from '../../src/game/mock';
 import { roomReducer, type MatchAction } from '../../src/game/reducer';
+import { momentOf } from '../../src/game/protocol';
 import type { Intent } from '../../src/game/transport';
 import {
   currentTurnId,
@@ -64,6 +65,9 @@ const EXPIRY_GRACE_MS = 1_000;
 
 /** Held back from the impostor's turn so its line still has time to land. See bots.ts. */
 const SEND_MARGIN_MS = 1_500;
+
+/** The longest draft kept — well past anything the composer lets you type. */
+const MAX_DRAFT_CHARS = 1_000;
 
 /** How long a finished match stays up so people can read the reveal. */
 const LINGER_AFTER_END_MS = 5 * 60_000;
@@ -109,6 +113,15 @@ export class Match {
   private readonly spectating = new Set<string>();
   /** People (player ids) who walked out. Their seat stays in the room; they stop getting it. */
   private readonly gone = new Set<string>();
+
+  /** Seat id → when that person, whose connection is down, will be removed (server clock). */
+  private readonly awayUntil = new Map<string, number>();
+  /**
+   * Seat id → what that person had typed on their turn, and the moment it was
+   * typed in. Kept only so it can be put in the room if their connection drops
+   * before they send it; never included in anything sent to a phone.
+   */
+  private readonly drafts = new Map<string, { at: string; text: string }>();
 
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   private turnDeadline: number | null = null;
@@ -180,6 +193,11 @@ export class Match {
     return this.seatOf.has(playerId) && !this.gone.has(playerId);
   }
 
+  /** Decided — the reveal is up and nothing is left to play. */
+  isOver() {
+    return this.room.outcome !== null;
+  }
+
   /**
    * The room as one person is allowed to see it. Their own seat is marked as
    * theirs, and everything they must not know is taken out — see `view.ts`.
@@ -191,13 +209,23 @@ export class Match {
   view(playerId: string): Room {
     const seatId = this.seatOf.get(playerId);
     if (!seatId) throw new Error('not in this match');
-    return viewFor(this.room, seatId, this.spectating.has(playerId));
+    return viewFor(this.room, seatId, this.spectating.has(playerId), this.awayUntil);
   }
 
-  /** Something a person did. Anything that is not theirs to do is dropped. */
-  handle(playerId: string, intent: Intent) {
+  /**
+   * Something a person did. Anything that is not theirs to do is dropped.
+   *
+   * `at` is the moment the phone was looking at when it was sent (`momentOf`).
+   * An answer or a vote for a moment that has passed is dropped too: a phone
+   * that lost its connection sends what it was holding once it is back, and an
+   * answer typed for the last lap must not land on your turn in this one.
+   */
+  handle(playerId: string, intent: Intent, at?: string) {
     if (this.disposed || !this.has(playerId)) return;
     const seatId = this.seatOf.get(playerId)!;
+
+    const timely = at === undefined || at === momentOf(this.room);
+    if ((intent.type === 'answer' || intent.type === 'vote') && !timely) return;
 
     switch (intent.type) {
       case 'answer':
@@ -233,6 +261,49 @@ export class Match {
     }
   }
 
+  /**
+   * What somebody has typed so far on their turn. Kept for the moment it was
+   * typed in, and only if it is their turn in that moment — anything else is
+   * not an answer in progress.
+   */
+  draft(playerId: string, text: string, at: string) {
+    if (this.disposed || !this.has(playerId)) return;
+    const seatId = this.seatOf.get(playerId)!;
+    if (this.room.phase !== 'answering' || currentTurnId(this.room) !== seatId) return;
+    if (at !== momentOf(this.room)) return;
+    this.drafts.set(seatId, { at, text: text.slice(0, MAX_DRAFT_CHARS) });
+  }
+
+  /**
+   * Their connection went (`until` is when they will be removed), or came back
+   * (`null`). Everybody in the room is told, so the seat can show a countdown.
+   */
+  setAway(playerId: string, until: number | null) {
+    if (this.disposed || !this.has(playerId)) return;
+    const seatId = this.seatOf.get(playerId)!;
+    if (until === null) {
+      if (!this.awayUntil.delete(seatId)) return;
+    } else {
+      this.awayUntil.set(seatId, until);
+    }
+    this.onChange(this);
+  }
+
+  /**
+   * Gone too long. If it is their turn, what they had typed goes in the room
+   * first — or, if nothing, a line saying their connection went — and then
+   * they are out, the same as walking out.
+   */
+  removeForBeingAway(playerId: string) {
+    if (!this.has(playerId)) return;
+    const seatId = this.seatOf.get(playerId)!;
+    if (this.room.phase === 'answering' && currentTurnId(this.room) === seatId) {
+      this.dispatch(this.lostConnectionAnswer(seatId));
+    }
+    this.awayUntil.delete(seatId);
+    this.leave(playerId);
+  }
+
   /** Walk out: final, the seat stays listed, and the room carries on. */
   leave(playerId: string) {
     if (!this.has(playerId)) return;
@@ -245,6 +316,33 @@ export class Match {
 
   // ---------------------------------------------------------------------------
 
+  /**
+   * What goes in the room when a turn's clock runs out.
+   *
+   * Somebody still connected who sent nothing ran out of time — their phone
+   * sends whatever was in the box on its own clock, so reaching this with them
+   * connected means there was nothing. Somebody disconnected could not send,
+   * so what they had typed is sent for them.
+   */
+  private expiredTurnAnswer(): MatchAction {
+    const seatId = currentTurnId(this.room);
+    if (seatId && this.awayUntil.has(seatId)) return this.lostConnectionAnswer(seatId);
+    return { type: 'answerTurn', text: '', timedOut: true, replyToId: null };
+  }
+
+  /** Their draft for this turn if they had one, otherwise an empty "lost connection" line. */
+  private lostConnectionAnswer(seatId: string): MatchAction {
+    const draft = this.drafts.get(seatId);
+    const text = draft && draft.at === momentOf(this.room) ? draft.text.trim() : '';
+    return {
+      type: 'answerTurn',
+      text,
+      timedOut: text.length === 0,
+      replyToId: null,
+      lostConnection: true,
+    };
+  }
+
   private dispatch(action: MatchAction) {
     if (this.disposed) return;
     const next = roomReducer(this.room, action);
@@ -255,6 +353,11 @@ export class Match {
   }
 
   private afterChange() {
+    // A draft belongs to one turn. Once the match has moved on it is not an
+    // answer in progress any more.
+    const now = momentOf(this.room);
+    for (const [seatId, d] of this.drafts) if (d.at !== now) this.drafts.delete(seatId);
+
     this.armClocks();
     this.driveSeats();
     this.onChange(this);
@@ -279,7 +382,7 @@ export class Match {
       this.turnDeadline = turnEnds;
       if (turnEnds !== null) {
         this.turnTimer = setTimeout(
-          () => this.dispatch({ type: 'answerTurn', text: '', timedOut: true, replyToId: null }),
+          () => this.dispatch(this.expiredTurnAnswer()),
           Math.max(0, turnEnds - Date.now() + EXPIRY_GRACE_MS)
         );
       }

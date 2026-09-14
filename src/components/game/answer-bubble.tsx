@@ -25,6 +25,16 @@ type AnswerBubbleProps = {
   replySelected?: boolean;
 };
 
+/**
+ * What an empty turn says instead of an answer, or null when there is an answer.
+ * Running out of time and losing the connection are different things to have
+ * happened to somebody, and the room should be able to tell which.
+ */
+function silentLabel(answer: Answer): string | null {
+  if (!answer.timedOut) return null;
+  return answer.lostConnection ? 'lost connection before finishing' : 'ran out of time';
+}
+
 /** The quoted answer a reply sits on top of, WhatsApp-style. */
 function Quote({
   answer,
@@ -59,7 +69,7 @@ function Quote({
           onOwnBubble ? styles.quoteTextOwn : styles.quoteText,
           onOwnBubble && ink ? { color: ink } : null,
         ]}>
-        {answer.timedOut ? 'ran out of time' : answer.text}
+        {silentLabel(answer) ?? answer.text}
       </ThemedText>
     </View>
   );
@@ -111,7 +121,7 @@ export function AnswerBubble({
   replySelected,
 }: AnswerBubbleProps) {
   const isYou = author?.isYou ?? false;
-  const body = answer.timedOut ? 'ran out of time' : answer.text;
+  const body = silentLabel(answer) ?? answer.text;
 
   // A turn nobody wrote in is not something you can answer back to.
   const canReply = !!onReply && !answer.timedOut;

@@ -21,6 +21,8 @@ export type ReplyPreview = {
 
 type ComposerProps = {
   onSend: (text: string) => void;
+  /** Every change to what is typed, before it is sent. */
+  onChangeText?: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
   /** Shown above the input while an answer is picked to reply to. */
@@ -31,6 +33,7 @@ type ComposerProps = {
 
 export function Composer({
   onSend,
+  onChangeText,
   disabled,
   placeholder = 'Type your answer…',
   replyTo,
@@ -86,7 +89,10 @@ export function Composer({
       <View style={styles.bar}>
         <TextInput
           value={text}
-          onChangeText={setText}
+          onChangeText={(next) => {
+            setText(next);
+            onChangeText?.(next);
+          }}
           placeholder={placeholder}
           placeholderTextColor={Colors.textMuted}
           selectionColor={Colors.accent}

@@ -47,6 +47,13 @@ export type Matchmaking = {
   total: number;
 };
 
+/**
+ * Something that happened to you while the app could not show it — shown once
+ * you are back. `removedForBeingAway`: you were disconnected for too long
+ * during a match and it carried on without you.
+ */
+export type Notice = 'removedForBeingAway';
+
 export type MatchTransport = {
   /** The room as you are allowed to see it, or null when you are not in one. */
   room: Room | null;
@@ -56,4 +63,18 @@ export type MatchTransport = {
   findMatch: (size: RoomSize) => void;
   /** Do something. Quietly ignored when it is not yours to do. */
   send: (intent: Intent) => void;
+  /**
+   * False while the connection to whatever runs the match is down and being
+   * retried. Always true on one device, where there is nothing to lose.
+   */
+  connected: boolean;
+  /**
+   * What you have typed so far on your turn, as you type it. Online this is what
+   * the server puts in the room for you if your connection drops before you
+   * send; on one device there is nothing to lose, and it does nothing.
+   */
+  draft: (text: string) => void;
+  /** Something to tell you on your way back in, or null. */
+  notice: Notice | null;
+  dismissNotice: () => void;
 };

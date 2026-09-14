@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ConnectionBanner } from '@/components/game/connection-banner';
 import { Colors } from '@/constants/theme';
 import { RoomProvider, useRoomStore } from '@/game/store';
 
@@ -33,6 +34,7 @@ export default function RootLayout() {
         <RoomProvider>
           <StatusBar style="light" />
           <Routes />
+          <ConnectionBanner />
         </RoomProvider>
       </ThemeProvider>
     </GestureHandlerRootView>

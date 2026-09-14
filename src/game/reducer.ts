@@ -48,7 +48,14 @@ export type MatchAction =
        */
       humanIds?: string[];
     }
-  | { type: 'answerTurn'; text: string; timedOut: boolean; replyToId: string | null }
+  | {
+      type: 'answerTurn';
+      text: string;
+      timedOut: boolean;
+      replyToId: string | null;
+      /** Sent for them because their connection went. See `Answer.lostConnection`. */
+      lostConnection?: boolean;
+    }
   | { type: 'playerLeft'; playerId: string }
   | { type: 'castVote'; voterId: string; targetId: string | null }
   | { type: 'closeBallot' }
@@ -320,6 +327,7 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
           // starred text and every reader of it agrees.
           text: censor(action.text.trim()),
           timedOut: action.timedOut,
+          ...(action.lostConnection ? { lostConnection: true } : {}),
           inTiebreaker: room.tiebreaker !== null,
           replyToId,
           createdAt: Date.now(),
