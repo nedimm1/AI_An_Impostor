@@ -1,0 +1,10 @@
+{
+  "name": "an-impostor-server",
+  "private": true,
+  "description": "Only what the game server needs, so the Docker image does not install the whole Expo app. Keep these versions in step with the root package.json.",
+  "dependencies": {
+    "obscenity": "^0.4.6",
+    "tsx": "^4.23.13",
+    "ws": "^8.21.3"
+  }
+}

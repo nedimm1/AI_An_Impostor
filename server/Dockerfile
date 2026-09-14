@@ -1,23 +1,22 @@
-# The impostor proxy, and nothing else.
+# The game server: the online match and the impostor, in one process.
 #
-# `server/` has no npm dependencies — index.js pulls in `http`, `os` and `path`
-# and that is the lot — so there is no install step, no node_modules and no
-# lockfile to keep in sync. The image is the runtime plus five files.
-#
-# It exists for the same reason the server does: the OpenRouter key must never
-# reach the app bundle. Running the proxy in a container keeps the key in one
-# place you can point at a machine that is not your laptop.
+# It runs TypeScript directly with `tsx`, because the match uses the same rules
+# files as the app (`src/game/`) rather than a second copy of them. So the image
+# carries three things: the server, those game files, and the three packages
+# the server needs — listed in server/package.json so this does not install
+# the whole Expo app to get them.
 FROM node:22-alpine
-
-# Node 20.6+ for `process.loadEnvFile`, which index.js calls for local runs.
-# In a container the variables are passed in directly instead, and the call is
-# wrapped in a try/catch so a missing .env is the normal case here.
 
 WORKDIR /app
 
-# Only the server. The Expo app, the assets and the tests are not its business,
-# and leaving them out keeps a rebuild to the files that actually changed.
+# Dependencies first, on their own layer, so changing a line of game code does
+# not reinstall them.
+COPY server/package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund
+
 COPY server/ ./server/
+# Only the game rules. The screens, hooks and assets are the app's business.
+COPY src/game/ ./src/game/
 
 # Don't run as root for a process whose whole job is talking to the internet.
 USER node
@@ -26,6 +25,5 @@ ENV NODE_ENV=production
 ENV IMPOSTOR_PORT=8787
 EXPOSE 8787
 
-# `server.listen(PORT)` binds every interface, so this is reachable from
-# outside the container without further argument.
-CMD ["node", "server/index.js"]
+# HTTP routes and the `/game` WebSocket share this one port.
+CMD ["node_modules/.bin/tsx", "server/index.js"]

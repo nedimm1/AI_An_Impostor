@@ -14,7 +14,7 @@ import { useRoomStore } from '@/game/store';
  */
 export default function QueueScreen() {
   const router = useRouter();
-  const { matchmaking, findMatch, room } = useRoomStore();
+  const { matchmaking, findMatch, room, send } = useRoomStore();
 
   // Asking to be seated is all this screen does. Who the strangers are, how
   // long they take and when the room opens are not its business.
@@ -32,6 +32,11 @@ export default function QueueScreen() {
   const total = matchmaking?.total ?? 7;
 
   const handleCancel = () => {
+    // Out of the queue, not just off the screen. Online, leaving the screen
+    // alone would leave you queued on the server and matched into a room you
+    // are no longer looking at. On one device there is no room yet and this
+    // does nothing.
+    send({ type: 'leave' });
     if (router.canGoBack()) router.back();
     else router.replace('/');
   };

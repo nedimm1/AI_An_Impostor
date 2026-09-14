@@ -34,7 +34,20 @@ import {
  * job — see `transport.ts`.
  */
 export type MatchAction =
-  | { type: 'startMatch'; id: string; yourId: string; strangers: Player[] }
+  | {
+      type: 'startMatch';
+      id: string;
+      yourId: string;
+      strangers: Player[];
+      /**
+       * Every seat held by a real person, `yourId` included. On one device
+       * that is only you, and it can be left out. On a server several strangers
+       * are people too, and the impostor has to be drawn from the seats that
+       * are not — a room where the model's seat was handed to a human has no
+       * impostor at all.
+       */
+      humanIds?: string[];
+    }
   | { type: 'answerTurn'; text: string; timedOut: boolean; replyToId: string | null }
   | { type: 'playerLeft'; playerId: string }
   | { type: 'castVote'; voterId: string; targetId: string | null }
@@ -69,7 +82,12 @@ function turnOrderFor(players: Player[], round: number, turnsEach: number) {
  * impostor is drawn here purely so the shell can reveal *someone* at the end —
  * real selection happens server-side and never reaches the client early.
  */
-function matchedRoom(id: string, yourId: string, strangers: Player[]): Room {
+function matchedRoom(
+  id: string,
+  yourId: string,
+  strangers: Player[],
+  humanIds: string[] = [yourId]
+): Room {
   const you: Player = {
     id: yourId,
     name: '',
@@ -99,9 +117,9 @@ function matchedRoom(id: string, yourId: string, strangers: Player[]): Room {
     tint: colours[seat].tint,
   }));
 
-  const impostor = players.filter((p) => !p.isYou)[
-    Math.floor(Math.random() * (players.length - 1))
-  ];
+  const humans = new Set([yourId, ...humanIds]);
+  const candidates = players.filter((p) => !humans.has(p.id));
+  const impostor = candidates[Math.floor(Math.random() * candidates.length)];
   // Testing only, and a rename rather than a reveal: the room, the model and
   // the transcript all have to agree on what it is called, or it cannot pick
   // its own lines out of the room it is reading. See `testing.ts`.
@@ -274,7 +292,7 @@ function resolveBallot(room: Room): Room {
 export function roomReducer(room: Room | null, action: MatchAction): Room | null {
   switch (action.type) {
     case 'startMatch':
-      return matchedRoom(action.id, action.yourId, action.strangers);
+      return matchedRoom(action.id, action.yourId, action.strangers, action.humanIds);
 
     case 'leaveRoom':
       return null;

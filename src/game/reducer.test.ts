@@ -101,6 +101,40 @@ function everyoneVotesFor(state: Room | null, targetId: string): Room | null {
   );
 }
 
+describe('seating several real people', () => {
+  it('never hands the impostor seat to anybody who is a person', () => {
+    // Every draw the random source can make, not a lucky one: the pick is
+    // Math.random over the candidates, so sweep it across the whole range.
+    for (const r of [0, 0.2, 0.4, 0.6, 0.8, 0.9999]) {
+      const state = withFixedRandom(r, () =>
+        roomReducer(null, {
+          type: 'startMatch',
+          id: 'rm_online',
+          yourId: YOUR_ID,
+          strangers: strangers('Mara', 'Deniz', 'Kofi', 'Ines'),
+          humanIds: [YOUR_ID, 'p_mara', 'p_deniz'],
+        })
+      );
+      expect([YOUR_ID, 'p_mara', 'p_deniz']).not.toContain(room(state).impostorId);
+      expect(['p_kofi', 'p_ines']).toContain(room(state).impostorId);
+    }
+  });
+
+  it('still picks among everybody but you when the humans are not listed', () => {
+    // The one-device path, which passes no humanIds at all.
+    const state = withFixedRandom(0.9999, () =>
+      roomReducer(null, {
+        type: 'startMatch',
+        id: 'rm_local',
+        yourId: YOUR_ID,
+        strangers: strangers('Mara', 'Deniz', 'Kofi', 'Ines'),
+      })
+    );
+    expect(room(state).impostorId).not.toBe(YOUR_ID);
+    expect(room(state).impostorId).not.toBeNull();
+  });
+});
+
 describe('seating', () => {
   it('gives you the durable player id you were seated with', () => {
     const state = seated();

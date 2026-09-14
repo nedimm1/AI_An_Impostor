@@ -3,8 +3,8 @@
  *
  * Two things live here and nothing else. The profile, which is yours and
  * outlives any room, and a `MatchTransport`, which is whatever is currently
- * running matches. Today that is `useLocalTransport` — the whole simulation,
- * behind one interface. Pointing this at a server is a one-line change here.
+ * running matches: `useLocalTransport` runs the whole game on this device, and
+ * `useRemoteTransport` hands it to the game server. Screens cannot tell which.
  */
 
 import {
@@ -18,7 +18,17 @@ import {
 
 import { useLocalTransport } from './local-transport';
 import { loadProfile, saveProfile, type Profile } from './profile';
+import { GAME_URL, useRemoteTransport } from './remote-transport';
 import type { MatchTransport } from './transport';
+
+/**
+ * Online when a game server is configured, on this device when it is not.
+ *
+ * Decided once, at load, because it is a build setting (`EXPO_PUBLIC_GAME_URL`
+ * is inlined into the bundle) — and because a hook cannot be swapped for
+ * another hook between renders.
+ */
+const useTransport = GAME_URL ? useRemoteTransport : useLocalTransport;
 
 /** How long a profile change settles before it is written to disk. */
 const SAVE_DEBOUNCE_MS = 400;
@@ -55,7 +65,7 @@ export function RoomProvider({ children }: PropsWithChildren) {
     return () => clearTimeout(timer);
   }, [profile]);
 
-  const transport = useLocalTransport(profile);
+  const transport = useTransport(profile);
 
   const value = useMemo(
     () => ({

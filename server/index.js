@@ -220,6 +220,58 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/*
+ * The game itself, on the same port.
+ *
+ * Phones that play online connect a WebSocket to `/game` on this server and the
+ * match runs here (`server/game/`). The impostor is called straight from the
+ * match rather than over the `/answer` and `/vote` routes above — those stay for
+ * the one-device mode and the sample scripts.
+ *
+ * Calls go through the same accounting as those routes, so the cost report on
+ * the way out still covers everything the model did.
+ */
+const { attachGame } = require('./game/socket');
+
+attachGame(server, {
+  async answer(turn) {
+    const started = Date.now();
+    try {
+      const result = await writeAnswer(turn);
+      totals.calls += 1;
+      if (result.text === null) totals.empties += 1;
+      totals.input += result.usage.input_tokens ?? 0;
+      totals.cached += result.usage.cache_read_input_tokens ?? 0;
+      totals.output += result.usage.output_tokens ?? 0;
+      totals.cost += result.usage.cost ?? 0;
+      console.log(
+        `  ${String(Date.now() - started).padStart(5)}ms  ${result.persona.name.padEnd(6)} ${
+          result.text === null ? '(empty)' : result.text
+        }`
+      );
+      return result.text;
+    } catch (error) {
+      totals.failures += 1;
+      console.error(`  game answer failed (${error?.status ?? 500}): ${error.message}`);
+      return null;
+    }
+  },
+  async vote(ballot) {
+    try {
+      const result = await castVote(ballot);
+      totals.votes += 1;
+      totals.input += result.usage.input_tokens ?? 0;
+      totals.output += result.usage.output_tokens ?? 0;
+      totals.cost += result.usage.cost ?? 0;
+      return result.name ?? null;
+    } catch (error) {
+      totals.failures += 1;
+      console.error(`  game vote failed (${error?.status ?? 500}): ${error.message}`);
+      return null;
+    }
+  },
+});
+
 if (!process.env.OPENROUTER_API_KEY) {
   console.error(
     '\nNo credentials. Set OPENROUTER_API_KEY and run again.\nThe key stays in this process — it is never sent to the app.\n'
@@ -231,7 +283,8 @@ server.listen(PORT, () => {
   console.log(`\nAn Impostor — the impostor is listening\n`);
   console.log(`  simulator        http://localhost:${PORT}`);
   console.log(`  device           http://${lanAddress()}:${PORT}   (same wifi)`);
-  console.log(`\n  put that in EXPO_PUBLIC_IMPOSTOR_URL and start the app\n`);
+  console.log(`\n  put that in EXPO_PUBLIC_IMPOSTOR_URL and start the app`);
+  console.log(`  online play:     ws://${lanAddress()}:${PORT}/game   (EXPO_PUBLIC_GAME_URL)\n`);
 
   /*
    * Which route, said plainly.

@@ -1,6 +1,7 @@
-# The image carries `server/` and nothing else, so everything here is either
-# irrelevant to it or actively unwanted in a build context.
+# The image carries server/ and src/game/ and nothing else, so everything here
+# is either irrelevant to it or actively unwanted in a build context.
 node_modules
+server/node_modules
 .git
 .expo
 .vscode
@@ -9,7 +10,6 @@ ios
 dist
 build
 assets
-src
 scripts
 app.json
 package*.json
@@ -17,6 +17,10 @@ tsconfig.json
 eslint.config.js
 *.png
 *.jpg
+
+# Everything in src except the game rules the server runs.
+src/*
+!src/game
 
 # Never. The key goes in as an environment variable at run time, not baked
 # into a layer where `docker history` can read it back out.
