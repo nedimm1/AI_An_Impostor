@@ -231,6 +231,21 @@ const server = http.createServer(async (req, res) => {
  * Calls go through the same accounting as those routes, so the cost report on
  * the way out still covers everything the model did.
  */
+/*
+ * Never in test mode, whatever `.env` says.
+ *
+ * Test mode renames the impostor's seat to "AI" so you can watch it on one
+ * device (`src/game/testing.ts`). This server reads the same `.env` as the app,
+ * so turning test mode on for the app would otherwise label the impostor for
+ * every player in every online match. The flag is read once, when the game
+ * rules are first loaded — which is the require just below — so it is removed
+ * here, before that happens.
+ */
+if (process.env.EXPO_PUBLIC_TEST_MODE) {
+  console.log('  EXPO_PUBLIC_TEST_MODE is set; ignored by the game server');
+  delete process.env.EXPO_PUBLIC_TEST_MODE;
+}
+
 const { attachGame } = require('./game/socket');
 
 attachGame(server, {

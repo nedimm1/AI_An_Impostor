@@ -12,9 +12,15 @@
  * view with their own seat marked as theirs (`view`); the rules never cared
  * which seat was "you", so that is all it takes.
  *
+ * SEATS ARE NOT PEOPLE. Inside the room every seat has a seat id, made by the
+ * same generator for a person, a stand-in and the impostor alike, and this
+ * class keeps the only map from a person's durable player id to their seat.
+ * The room never contains a player id. That matters twice: a player id is
+ * never meant to be shown to anybody else (`profile.ts`), and ids in two
+ * different formats would mark out which seat is not a person without anyone
+ * reading a word. What each person is sent is filtered again in `view.ts`.
+ *
  * WHAT IS NOT HERE YET, deliberately, because each is its own step:
- * - the impostor's identity is still in every view (`impostorId`), which a
- *   phone could read. Hiding it until the reveal is step 3.
  * - a player whose connection drops keeps their seat and simply runs out of
  *   time on their turns, the same as putting the phone down. Proper reconnect
  *   handling is step 4.
@@ -30,7 +36,7 @@ import {
   voteDelay,
 } from '../../src/game/humanlike';
 import { impostorBallot, impostorTurn } from '../../src/game/impostor-payload';
-import { makeSessionId, mockAnswer, mockStrangers } from '../../src/game/mock';
+import { makeId, makeSessionId, mockAnswer, mockStrangers } from '../../src/game/mock';
 import { roomReducer, type MatchAction } from '../../src/game/reducer';
 import type { Intent } from '../../src/game/transport';
 import {
@@ -41,6 +47,8 @@ import {
   type Player,
   type Room,
 } from '../../src/game/types';
+
+import { viewFor } from './view';
 
 /**
  * How long past a deadline the room waits before enforcing it.
@@ -90,11 +98,13 @@ export class Match {
   readonly id: string;
   private room: Room;
 
-  /** Seats held by people. Everyone else is a stand-in or the impostor. */
-  private readonly humans: Set<string>;
-  /** People who were voted out and chose to keep watching. */
+  /** Person (durable player id) → their seat id in the room. The only place the two meet. */
+  private readonly seatOf = new Map<string, string>();
+  /** Seat ids held by people. Every other seat is a stand-in or the impostor. */
+  private readonly humanSeats: Set<string>;
+  /** People (player ids) who were voted out and chose to keep watching. */
   private readonly spectating = new Set<string>();
-  /** People who walked out. Their seat stays in the room; they stop getting it. */
+  /** People (player ids) who walked out. Their seat stays in the room; they stop getting it. */
   private readonly gone = new Set<string>();
 
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
@@ -126,12 +136,16 @@ export class Match {
       throw new Error(`${humanIds.length} people for ${seats} seats — one seat is the impostor`);
     }
 
-    this.humans = new Set(humanIds);
+    // A seat for each person, from the same generator `mockStrangers` uses for
+    // everyone else — so nothing about a seat's id says whether a person holds it.
+    for (const playerId of humanIds) this.seatOf.set(playerId, makeId('p'));
+    const seatIds = humanIds.map((id) => this.seatOf.get(id)!);
+    this.humanSeats = new Set(seatIds);
 
-    // Seats for the other people, drawn exactly like stand-ins: no name and no
-    // colour, because the room deals those. The reducer is told which are
+    // The other people's seats are drawn exactly like stand-ins: no name and no
+    // colour, because the room deals those. The reducer is told which seats are
     // people so the impostor is never one of them.
-    const otherPeople: Player[] = humanIds.slice(1).map((id) => ({
+    const otherPeople: Player[] = seatIds.slice(1).map((id) => ({
       id,
       name: '',
       tint: '',
@@ -143,9 +157,9 @@ export class Match {
     const started = roomReducer(null, {
       type: 'startMatch',
       id: makeSessionId(),
-      yourId: humanIds[0],
+      yourId: seatIds[0],
       strangers: [...otherPeople, ...mockStrangers(seats - humanIds.length)],
-      humanIds,
+      humanIds: seatIds,
     });
     if (!started) throw new Error('the room did not start');
 
@@ -154,40 +168,39 @@ export class Match {
     this.afterChange();
   }
 
-  /** The people in this match who have not walked out. */
+  /** The people (player ids) in this match who have not walked out. */
   players(): string[] {
-    return [...this.humans].filter((id) => !this.gone.has(id));
+    return [...this.seatOf.keys()].filter((id) => !this.gone.has(id));
   }
 
   has(playerId: string) {
-    return this.humans.has(playerId) && !this.gone.has(playerId);
+    return this.seatOf.has(playerId) && !this.gone.has(playerId);
   }
 
   /**
-   * The room as one person sees it: their own seat marked as theirs.
+   * The room as one person is allowed to see it. Their own seat is marked as
+   * theirs, and everything they must not know is taken out — see `view.ts`.
    *
    * `youId`, `isYou` and `spectating` are the only per-person things in a room,
    * and the rules never read them to decide anything — they exist for the
    * screens. So a single room serves everyone, relabelled on the way out.
    */
   view(playerId: string): Room {
-    return {
-      ...this.room,
-      youId: playerId,
-      players: this.room.players.map((p) => ({ ...p, isYou: p.id === playerId })),
-      spectating: this.spectating.has(playerId),
-    };
+    const seatId = this.seatOf.get(playerId);
+    if (!seatId) throw new Error('not in this match');
+    return viewFor(this.room, seatId, this.spectating.has(playerId));
   }
 
   /** Something a person did. Anything that is not theirs to do is dropped. */
   handle(playerId: string, intent: Intent) {
     if (this.disposed || !this.has(playerId)) return;
+    const seatId = this.seatOf.get(playerId)!;
 
     switch (intent.type) {
       case 'answer':
         // Only on your own turn — the reducer answers whoever's turn it is, so
         // this check is the whole of "you cannot speak for somebody else".
-        if (currentTurnId(this.room) !== playerId) return;
+        if (currentTurnId(this.room) !== seatId) return;
         this.dispatch({
           type: 'answerTurn',
           text: intent.text,
@@ -197,7 +210,8 @@ export class Match {
         return;
 
       case 'vote':
-        this.dispatch({ type: 'castVote', voterId: playerId, targetId: intent.targetId });
+        // The target is a seat id, which is all a phone has ever been shown.
+        this.dispatch({ type: 'castVote', voterId: seatId, targetId: intent.targetId });
         return;
 
       case 'spectate':
@@ -220,7 +234,7 @@ export class Match {
   leave(playerId: string) {
     if (!this.has(playerId)) return;
     this.gone.add(playerId);
-    this.dispatch({ type: 'playerLeft', playerId });
+    this.dispatch({ type: 'playerLeft', playerId: this.seatOf.get(playerId)! });
 
     // Nobody left to play for. Stop spending clocks and model calls on it.
     if (this.players().length === 0) this.end();
@@ -327,7 +341,7 @@ export class Match {
   private seatTurn(turnKey: string) {
     const room = this.room;
     const seatId = currentTurnId(room);
-    if (!seatId || this.humans.has(seatId)) return;
+    if (!seatId || this.humanSeats.has(seatId)) return;
 
     const windowMs = room.settings.answerSeconds * 1000;
     const openedAt = Date.now();
@@ -370,7 +384,7 @@ export class Match {
     const windowMs = opened.settings.voteSeconds * 1000;
 
     for (const voter of survivors(opened)) {
-      if (this.humans.has(voter.id)) continue;
+      if (this.humanSeats.has(voter.id)) continue;
 
       const wait = voteDelay(windowMs);
       if (missesTurn(wait, windowMs)) continue;
