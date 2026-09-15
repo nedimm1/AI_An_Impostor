@@ -251,3 +251,46 @@ describe('a seat whose connection is down', () => {
     cleanUp(matches);
   });
 });
+
+describe('saying why somebody is gone', () => {
+  it('says they disconnected when the match carried on without them', () => {
+    const { lobby, match, matches } = duel();
+    const seat = match.view(person(1)).youId;
+    lobby.disconnected(person(1));
+    jest.advanceTimersByTime(GRACE);
+
+    const room = match.view(person(2));
+    expect(room.players.find((p) => p.id === seat)?.departedBecause).toBe('disconnected');
+    const departure = room.transcript.find((a) => a.kind === 'departure');
+    expect(departure?.departedBecause).toBe('disconnected');
+    cleanUp(matches);
+  });
+
+  it('says they left when they chose to', () => {
+    const { lobby, match, matches } = duel();
+    const seat = match.view(person(1)).youId;
+    lobby.leaveMatch(person(1));
+
+    const room = match.view(person(2));
+    expect(room.players.find((p) => p.id === seat)?.departedBecause).toBe('left');
+    expect(room.transcript.find((a) => a.kind === 'departure')?.departedBecause).toBe('left');
+    cleanUp(matches);
+  });
+
+  it.each(['left', 'disconnected'] as const)(
+    'takes somebody who %s out of the turn order, so they leave the turn strip',
+    (reason) => {
+      const { lobby, match, matches } = duel();
+      const seat = match.view(person(1)).youId;
+      if (reason === 'left') {
+        lobby.leaveMatch(person(1));
+      } else {
+        lobby.disconnected(person(1));
+        jest.advanceTimersByTime(GRACE);
+      }
+      // The strip is drawn from the turn order, lap by lap.
+      expect(match.view(person(2)).turnOrder).not.toContain(seat);
+      cleanUp(matches);
+    }
+  );
+});

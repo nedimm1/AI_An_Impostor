@@ -25,6 +25,7 @@ import {
   type Outcome,
   type Player,
   type Room,
+  type DepartureReason,
 } from './types';
 
 /**
@@ -56,7 +57,12 @@ export type MatchAction =
       /** Sent for them because their connection went. See `Answer.lostConnection`. */
       lostConnection?: boolean;
     }
-  | { type: 'playerLeft'; playerId: string }
+  | {
+      type: 'playerLeft';
+      playerId: string;
+      /** Why they went. Left by choice unless said otherwise. */
+      reason?: DepartureReason;
+    }
   | { type: 'castVote'; voterId: string; targetId: string | null }
   | { type: 'closeBallot' }
   | { type: 'nextRound' }
@@ -352,6 +358,7 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
       const player = room.players.find((p) => p.id === action.playerId);
       if (!player || !player.connected || player.eliminated) return room;
 
+      const reason: DepartureReason = action.reason ?? 'left';
       const wasSpeaking = currentTurnId(room) === action.playerId;
       const { turnOrder, turnIndex } = turnOrderWithout(room, action.playerId);
       const everyoneAnswered = turnIndex >= turnOrder.length;
@@ -378,7 +385,7 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
       const left: Room = {
         ...room,
         players: room.players.map((p) =>
-          p.id === action.playerId ? { ...p, connected: false } : p
+          p.id === action.playerId ? { ...p, connected: false, departedBecause: reason } : p
         ),
         tiebreaker: stillAccused,
         pendingTiebreaker: pendingHolds ? stillPending : null,
@@ -387,12 +394,15 @@ export function roomReducer(room: Room | null, action: MatchAction): Room | null
             ? room.prompt
             : accusationHeld
               ? tiebreakerPrompt(room, stillAccused)
-              : `${player.name} walked out mid-accusation. The room still has to vote.`,
+              : reason === 'disconnected'
+                ? `${player.name} lost their connection mid-accusation. The room still has to vote.`
+                : `${player.name} walked out mid-accusation. The room still has to vote.`,
         transcript: [
           ...room.transcript,
           {
             id: makeId('out'),
             kind: 'departure' as const,
+            departedBecause: reason,
             playerId: action.playerId,
             round: room.round,
             text: '',

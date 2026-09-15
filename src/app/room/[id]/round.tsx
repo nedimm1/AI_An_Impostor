@@ -297,7 +297,8 @@ export default function RoundScreen() {
                 <>
                   {marker}
                   <ThemedText type="small" themeColor="textMuted" style={styles.departure}>
-                    {who?.name ?? 'Someone'} left the room
+                    {who?.name ?? 'Someone'}{' '}
+                    {item.departedBecause === 'disconnected' ? 'disconnected' : 'left the room'}
                   </ThemedText>
                 </>
               );

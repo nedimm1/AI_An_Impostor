@@ -38,6 +38,14 @@ export type Player = {
    * and the local clocks recover from absolute deadlines instead.
    */
   connected: boolean;
+  /**
+   * Why `connected` went false: they chose to leave, or their connection was
+   * gone long enough that the match carried on without them. The room says
+   * which, because "walked out" and "lost their signal" are different things
+   * to have happened to somebody. Absent while connected; absent on older
+   * departures too, which read as having left.
+   */
+  departedBecause?: DepartureReason;
   /** Voted out. Still listed, but out of the turn order and the vote. */
   eliminated: boolean;
   /**
@@ -49,6 +57,9 @@ export type Player = {
   awayUntil?: number | null;
 };
 
+/** See `Player.departedBecause`. */
+export type DepartureReason = 'left' | 'disconnected';
+
 export type Answer = {
   id: string;
   /**
@@ -57,6 +68,8 @@ export type Answer = {
    * out mid-round is part of the case against them.
    */
   kind: 'answer' | 'departure';
+  /** On a departure: why they went. See `Player.departedBecause`. */
+  departedBecause?: DepartureReason;
   playerId: string;
   /**
    * Which round this was said in. The room only ever shows the round it is on,

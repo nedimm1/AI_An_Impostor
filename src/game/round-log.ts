@@ -232,7 +232,9 @@ export function useRoundLog(room: Room | null) {
       const n = String(order.get(answer.id) ?? '?').padStart(2);
 
       if (answer.kind === 'departure') {
-        print(`║ ${n}   ${seat} left the room`);
+        print(
+          `║ ${n}   ${seat} ${answer.departedBecause === 'disconnected' ? 'disconnected' : 'left the room'}`
+        );
         continue;
       }
 

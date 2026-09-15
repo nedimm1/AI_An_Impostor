@@ -48,6 +48,7 @@ import {
   DEFAULT_SETTINGS,
   roundAnswers,
   survivors,
+  type DepartureReason,
   type Player,
   type Room,
 } from '../../src/game/types';
@@ -301,14 +302,14 @@ export class Match {
       this.dispatch(this.lostConnectionAnswer(seatId));
     }
     this.awayUntil.delete(seatId);
-    this.leave(playerId);
+    this.leave(playerId, 'disconnected');
   }
 
   /** Walk out: final, the seat stays listed, and the room carries on. */
-  leave(playerId: string) {
+  leave(playerId: string, reason: DepartureReason = 'left') {
     if (!this.has(playerId)) return;
     this.gone.add(playerId);
-    this.dispatch({ type: 'playerLeft', playerId: this.seatOf.get(playerId)! });
+    this.dispatch({ type: 'playerLeft', playerId: this.seatOf.get(playerId)!, reason });
 
     // Nobody left to play for. Stop spending clocks and model calls on it.
     if (this.players().length === 0) this.end();
