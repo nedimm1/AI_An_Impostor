@@ -14,6 +14,7 @@ import { AnswerBubble } from '@/components/game/answer-bubble';
 import { Composer, type ComposerHandle } from '@/components/game/composer';
 import { RoundBar } from '@/components/game/round-bar';
 import { TurnStrip } from '@/components/game/turn-strip';
+import { TypingBubble } from '@/components/game/typing-bubble';
 import { VotePanel } from '@/components/game/vote-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
@@ -58,13 +59,16 @@ export default function RoundScreen() {
   const id = room?.id;
   const round = room?.round;
 
-  // Every answer that lands — yours or theirs — takes the transcript to the end.
+  // Every answer that lands — yours or theirs — takes the transcript to the end,
+  // and so does the next seat going on the clock, whose typing bubble is drawn
+  // at the end of it.
   const answerCount = room ? roundAnswers(room).length : 0;
+  const onClockId = room?.phase === 'answering' ? currentTurnId(room) : null;
   useEffect(() => {
-    if (answerCount === 0) return;
+    if (answerCount === 0 && onClockId === null) return;
     pendingScroll.current = true;
     listRef.current?.scrollToEnd({ animated: true });
-  }, [answerCount]);
+  }, [answerCount, onClockId]);
 
   // The room only shows the round it is on, so a target from the last one has
   // gone off screen even though the transcript still holds it.
@@ -144,7 +148,6 @@ export default function RoundScreen() {
   const visible = roundAnswers(room);
   const speaker = playerById(room, currentTurnId(room));
   const alive = survivors(room);
-  const stillIn = alive.length;
 
   const voting = room.phase === 'voting';
   const inTiebreaker = room.tiebreaker !== null;
@@ -152,7 +155,6 @@ export default function RoundScreen() {
   // room still votes, but there is no longer a pair to put it "between".
   const accusationHeld = (room.tiebreaker?.length ?? 0) >= 2;
   const accused = youAreAccused(room);
-  const speakerAccused = speaker ? (room.tiebreaker?.includes(speaker.id) ?? false) : false;
 
   // You are locked once your vote is in — or from the start, if you are out and
   // only watching the room decide.
@@ -168,65 +170,45 @@ export default function RoundScreen() {
   const replyTarget = answerById(room, replyToId);
   const replyAuthor = playerById(room, replyTarget?.playerId);
 
+  // Only what nothing else on screen says. Who is speaking is the turn strip's
+  // and the typing bubble's to show, and the vote panel titles itself.
   const status = voting
-    ? out
-      ? 'You are out — the room votes without you'
-      : 'Everyone has spoken. Read it back, then vote.'
+    ? null
     : out
       ? 'You are out — watching'
-    : typingForStranger && speaker
-      ? `Answering as ${speaker.name}`
-      : yourTurn
-      ? inTiebreaker
-        ? accused
-          ? 'Your turn — say why it is not you'
-          : 'Your turn — say what you make of it'
-        : 'Your turn'
-      : speaker
-        ? inTiebreaker && speakerAccused
-          ? `${speaker.name} is making their case…`
-          : `${speaker.name} is answering…`
-        : 'Everyone has spoken';
+      : typingForStranger && speaker
+        ? `Answering as ${speaker.name}`
+        : yourTurn
+          ? inTiebreaker
+            ? accused
+              ? 'Your turn — say why it is not you'
+              : 'Your turn — say what you make of it'
+            : 'Your turn'
+          : null;
+
+  // The seat on the clock, drawn typing at the end of the chat. Not your own
+  // turn: you can see yourself typing.
+  const typing = room.phase === 'answering' && speaker && !speaker.isYou ? speaker : null;
 
   const placeholder = out
     ? 'You are out of the game'
     : typingForStranger && speaker
       ? `Type ${speaker.name}'s answer…`
       : yourTurn
-      ? inTiebreaker
-        ? accused
-          ? 'Why is it not you?'
-          : 'What do you make of it?'
-        : 'Type your answer…'
-      : speaker
-        ? `Waiting for ${speaker.name}…`
-        : 'Waiting…';
+        ? inTiebreaker
+          ? accused
+            ? 'Why is it not you?'
+            : 'What do you make of it?'
+          : 'Type your answer…'
+        : speaker
+          ? `Waiting for ${speaker.name}…`
+          : 'Waiting…';
 
   return (
     <Screen edges={['top', 'left', 'right']} padded={false}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Leave the game"
-            onPress={handleLeave}
-            hitSlop={12}
-            style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}>
-            <ThemedText type="body" style={styles.leaveGlyph}>
-              ✕
-            </ThemedText>
-          </Pressable>
-
-          <View style={styles.headerText}>
-            <ThemedText type="subtitle">The chatroom</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {stillIn} still in · one isn&apos;t a person
-            </ThemedText>
-          </View>
-        </View>
-
         <RoundBar
           round={room.round}
           turn={
@@ -240,6 +222,18 @@ export default function RoundScreen() {
           remaining={remaining}
           duration={room.settings.answerSeconds}
           status={status}
+          leading={
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Leave the game"
+              onPress={handleLeave}
+              hitSlop={12}
+              style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}>
+              <ThemedText type="small" style={styles.leaveGlyph}>
+                ✕
+              </ThemedText>
+            </Pressable>
+          }
           turns={
             // Only while somebody is on the clock. During the vote the strip
             // would be showing an order nobody is working through any more.
@@ -269,15 +263,17 @@ export default function RoundScreen() {
             listRef.current?.scrollToEnd({ animated: true });
           }}
           ListEmptyComponent={
-            <ThemedText type="small" themeColor="textMuted" style={styles.empty}>
-              Nobody has answered yet.
-            </ThemedText>
+            typing ? null : (
+              <ThemedText type="small" themeColor="textMuted" style={styles.empty}>
+                Nobody has answered yet.
+              </ThemedText>
+            )
           }
+          ListFooterComponent={typing ? <TypingBubble key={typing.id} player={typing} /> : null}
           renderItem={({ item, index }) => {
             const quoted = answerById(room, item.replyToId);
             // Everything above this line was said before the room tied.
-            const opensTheTiebreaker =
-              item.inTiebreaker && !visible[index - 1]?.inTiebreaker;
+            const opensTheTiebreaker = item.inTiebreaker && !visible[index - 1]?.inTiebreaker;
 
             const marker = opensTheTiebreaker ? (
               <View style={styles.marker}>
@@ -352,36 +348,36 @@ export default function RoundScreen() {
             onAction={() => send({ type: 'vote', targetId: voteFor })}
           />
         ) : (
-        <Composer
-          ref={composerRef}
-          onChangeText={(text) => {
-            // Online, this is what gets put in the room for you if your
-            // connection drops before you send. Only your own turn counts.
-            if (yourTurn && !out) draft(text);
-          }}
-          onSend={(text) => {
-            // Same box, two senders. Which one it is depends only on whose
-            // turn the room is on, so there is nothing to keep in sync.
-            if (typingForStranger && speakerId) {
-              send({ type: 'answerAs', playerId: speakerId, text, replyToId });
-            } else {
-              send({ type: 'answer', text, timedOut: false, replyToId });
+          <Composer
+            ref={composerRef}
+            onChangeText={(text) => {
+              // Online, this is what gets put in the room for you if your
+              // connection drops before you send. Only your own turn counts.
+              if (yourTurn && !out) draft(text);
+            }}
+            onSend={(text) => {
+              // Same box, two senders. Which one it is depends only on whose
+              // turn the room is on, so there is nothing to keep in sync.
+              if (typingForStranger && speakerId) {
+                send({ type: 'answerAs', playerId: speakerId, text, replyToId });
+              } else {
+                send({ type: 'answer', text, timedOut: false, replyToId });
+              }
+              setReplyToId(null);
+            }}
+            disabled={(!yourTurn && !typingForStranger) || out}
+            placeholder={placeholder}
+            replyTo={
+              replyTarget && replyAuthor
+                ? {
+                    name: replyAuthor.isYou ? 'yourself' : replyAuthor.name,
+                    text: replyTarget.text,
+                    color: replyAuthor.tint || colorForId(replyAuthor.id),
+                  }
+                : null
             }
-            setReplyToId(null);
-          }}
-          disabled={(!yourTurn && !typingForStranger) || out}
-          placeholder={placeholder}
-          replyTo={
-            replyTarget && replyAuthor
-              ? {
-                  name: replyAuthor.isYou ? 'yourself' : replyAuthor.name,
-                  text: replyTarget.text,
-                  color: colorForId(replyAuthor.id),
-                }
-              : null
-          }
-          onCancelReply={() => setReplyToId(null)}
-        />
+            onCancelReply={() => setReplyToId(null)}
+          />
         )}
         <View style={{ height: insets.bottom, backgroundColor: Colors.background }} />
       </KeyboardAvoidingView>
@@ -393,20 +389,9 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
-  },
-  headerText: {
-    flex: 1,
-    gap: 2,
-  },
   leaveButton: {
-    width: 36,
-    height: 36,
+    width: 30,
+    height: 30,
     borderRadius: Radius.md,
     backgroundColor: Colors.backgroundElement,
     borderWidth: 1,

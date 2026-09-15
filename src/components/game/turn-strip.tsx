@@ -34,8 +34,8 @@ import type { Player } from '@/game/types';
  * The seat on the clock grows into place rather than snapping: a jump cut
  * between two sizes reads as a re-render, a spring reads as the wheel landing.
  */
-const CURRENT = 46;
-const WAITING = 30;
+const CURRENT = 36;
+const WAITING = 24;
 
 type TurnStripProps = {
   /** Player ids in the order they speak, including repeats. */
@@ -161,33 +161,32 @@ export function TurnStrip({
 
       {laps > 1 ? (
         /*
-         * Which time round the room this is, as a gauge rather than a caption.
-         * The header above already spells it out — "Round 1 · Turn 2 of 3" — so
-         * a second set of words would just be the same sentence twice. What
-         * the words cannot do at a glance is show the lap filling up, which is
-         * the thing that makes a repeated face read as the second lap instead
-         * of a bug.
+         * Which time round the room this is. The header no longer spells it
+         * out, so this is the one place it is said: a small "Turn" over the
+         * count, and a pip per lap under it with the current one stretched
+         * and lit, so a repeated face reads as the second lap at a glance.
          */
-        <View style={styles.laps}>
-          <View style={styles.lapBars}>
+        <View
+          style={styles.laps}
+          accessibilityRole="text"
+          accessibilityLabel={`Turn ${lap + 1} of ${laps}`}>
+          <ThemedText type="label" style={styles.lapLabel}>
+            Turn
+          </ThemedText>
+          <ThemedText type="smallBold" style={styles.lapCount}>
+            {lap + 1}
+            <ThemedText type="small" style={styles.lapTotal}>
+              /{laps}
+            </ThemedText>
+          </ThemedText>
+          <View style={styles.pips}>
             {Array.from({ length: laps }, (_, i) => (
               <View
                 key={i}
-                style={[
-                  styles.lapBar,
-                  i < lap && styles.lapBarDone,
-                  i === lap && styles.lapBarNow,
-                ]}
+                style={[styles.pip, i < lap && styles.pipDone, i === lap && styles.pipNow]}
               />
             ))}
           </View>
-
-          <ThemedText type="mono" style={styles.lapCount}>
-            <ThemedText type="mono" style={styles.lapCountNow}>
-              {lap + 1}
-            </ThemedText>
-            /{laps}
-          </ThemedText>
         </View>
       ) : null}
     </View>
@@ -204,7 +203,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.one,
   },
   /** One lap, spread across whatever width there is. No scrolling: a lap fits. */
   seats: {
@@ -215,7 +214,7 @@ const styles = StyleSheet.create({
   },
   slot: {
     alignItems: 'center',
-    gap: Spacing.one,
+    gap: Spacing.half,
     flexShrink: 1,
   },
   head: {
@@ -239,38 +238,44 @@ const styles = StyleSheet.create({
   laps: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.one,
-    paddingLeft: Spacing.three,
-    marginLeft: Spacing.one,
+    gap: 3,
+    minWidth: 48,
+    paddingLeft: Spacing.two,
     borderLeftWidth: 1,
     borderLeftColor: Colors.border,
     alignSelf: 'stretch',
   },
-  lapBars: {
+  lapLabel: {
+    fontSize: 9,
+    lineHeight: 11,
+    color: Colors.textMuted,
+  },
+  lapCount: {
+    fontSize: 18,
+    lineHeight: 22,
+    color: Colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  lapTotal: {
+    fontSize: 12,
+    color: Colors.textMuted,
+  },
+  pips: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 3,
   },
-  /* Stacked rather than in a row: the column here is narrow, and a lap filling
-     downwards reads as progress where three dots read as decoration. */
-  lapBar: {
-    width: 16,
-    height: 3,
+  pip: {
+    width: 5,
+    height: 5,
     borderRadius: Radius.pill,
     backgroundColor: Colors.border,
   },
-  lapBarDone: {
+  pipDone: {
     backgroundColor: Colors.textMuted,
   },
-  lapBarNow: {
+  pipNow: {
+    width: 12,
     backgroundColor: Colors.accent,
-  },
-  lapCount: {
-    fontSize: 10,
-    lineHeight: 13,
-    color: Colors.textMuted,
-  },
-  lapCountNow: {
-    fontSize: 10,
-    lineHeight: 13,
-    color: Colors.text,
   },
 });

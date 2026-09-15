@@ -156,7 +156,9 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
     paddingTop: Spacing.two,
-    paddingBottom: Spacing.two,
+    // A little more under the box than over it, so it does not sit down on the
+    // bottom edge of the screen.
+    paddingBottom: Spacing.three + 4,
   },
   input: {
     flex: 1,

@@ -1,4 +1,14 @@
+import { SymbolView } from 'expo-symbols';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedText } from '@/components/themed-text';
 import { Avatar } from '@/components/ui/avatar';
@@ -6,12 +16,16 @@ import { colorForId, Colors, Radius, Spacing } from '@/constants/theme';
 import { textOnTint } from '@/game/seats';
 import type { Answer, Player } from '@/game/types';
 
-/**
- * The avatar, the gutter it sits in and the reply button opposite it are all
- * this wide. Three separate numbers were three chances for the row to go
- * crooked the next time one of them is nudged.
- */
+/** The avatar and the gutter it sits in. */
 const AVATAR = 40;
+
+/** The reply button beside each bubble. Small, so it costs the bubble little width. */
+const REPLY_BUTTON = 28;
+
+/** How far a bubble has to be dragged before letting go replies to it. */
+const SWIPE_TO_REPLY = 56;
+/** And how far it will follow the finger at most. */
+const SWIPE_MAX = 72;
 
 type AnswerBubbleProps = {
   answer: Answer;
@@ -19,7 +33,7 @@ type AnswerBubbleProps = {
   /** The answer this one was written at, when it was a reply. */
   replyTo?: Answer;
   replyToAuthor?: Player;
-  /** Long-pressing the bubble picks it as the thing you are replying to. */
+  /** Swiping the bubble right, or long-pressing it, picks it as the thing you are replying to. */
   onReply?: () => void;
   /** True while this is the answer the composer is aimed at. */
   replySelected?: boolean;
@@ -36,39 +50,24 @@ function silentLabel(answer: Answer): string | null {
 }
 
 /** The quoted answer a reply sits on top of, WhatsApp-style. */
-function Quote({
-  answer,
-  author,
-  onOwnBubble,
-  ink,
-}: {
-  answer: Answer;
-  author?: Player;
-  onOwnBubble: boolean;
-  /** What reads on the bubble behind it, when that bubble is your own tint. */
-  ink?: string;
-}) {
+function Quote({ answer, author }: { answer: Answer; author?: Player }) {
   // The seat's own colour, not a hash of its id — the name says "Mr. Green",
   // so the word beside it has to be green. `colorForId` stays for authorless
   // rows, which have no seat to take a colour from.
+  //
+  // The side border is that colour on every bubble, your own included: it is
+  // how you see at a glance whose words are being answered. On your own tint a
+  // coloured border used to be swapped for the bubble's ink, which made every
+  // quote in your bubbles look the same — so the quote is the same dark block
+  // on every bubble, which any seat's colour reads against.
   const color = author ? author.tint || colorForId(author.id) : Colors.textSecondary;
-  // On your own bubble the quote sits on your tint, so it takes that bubble's
-  // ink rather than a fixed translucent white — which vanished on Yellow.
-  const accent = onOwnBubble ? (ink ?? 'rgba(255, 255, 255, 0.75)') : color;
 
   return (
-    <View
-      style={[styles.quote, onOwnBubble && styles.quoteOwn, { borderLeftColor: accent }]}>
-      <ThemedText type="label" numberOfLines={1} style={{ color: accent }}>
+    <View style={[styles.quote, { borderLeftColor: color }]}>
+      <ThemedText type="smallBold" numberOfLines={1} style={[styles.quoteName, { color }]}>
         {author?.isYou ? 'You' : (author?.name ?? 'Someone')}
       </ThemedText>
-      <ThemedText
-        type="small"
-        numberOfLines={2}
-        style={[
-          onOwnBubble ? styles.quoteTextOwn : styles.quoteText,
-          onOwnBubble && ink ? { color: ink } : null,
-        ]}>
+      <ThemedText type="small" numberOfLines={2} style={styles.quoteText}>
         {silentLabel(answer) ?? answer.text}
       </ThemedText>
     </View>
@@ -76,8 +75,14 @@ function Quote({
 }
 
 /**
- * The affordance for writing back at an answer. Long-pressing the bubble does
- * the same thing, but nothing on screen says so — this is the discoverable one.
+ * The visible way to reply: a small button beside the bubble, level with its
+ * bottom edge.
+ *
+ * It went away once, for swipe-to-reply, and came back because nothing on
+ * screen said a swipe was there — people could not tell how to answer
+ * somebody. It is smaller than the first one (which was as wide as an avatar
+ * and took a fifth of every row) and carries a real reply icon rather than a
+ * text arrow, so it reads as a button and not as decoration.
  */
 function ReplyButton({
   onPress,
@@ -94,20 +99,67 @@ function ReplyButton({
       accessibilityLabel={`Reply to ${name}`}
       accessibilityState={{ selected }}
       onPress={onPress}
-      hitSlop={10}
+      hitSlop={8}
       style={({ pressed }) => [
         styles.replyButton,
-        selected && styles.replyButtonActive,
+        selected && styles.replyButtonSelected,
         pressed && styles.replyButtonPressed,
       ]}>
-      {({ pressed }) => (
-        <ThemedText
-          style={[styles.replyGlyph, (selected || pressed) && styles.replyGlyphActive]}>
-          {/* Variation selector keeps Android off the emoji glyph. */}
-          {'\u21A9\uFE0E'}
-        </ThemedText>
-      )}
+      <SymbolView
+        name={{ ios: 'arrowshape.turn.up.left.fill', android: 'reply', web: 'reply' }}
+        size={13}
+        tintColor={selected ? Colors.textOnAccent : Colors.textMuted}
+      />
     </Pressable>
+  );
+}
+
+/**
+ * Drag a message right and let go to reply to it, the way WhatsApp does — the
+ * shortcut beside the reply button, for people who expect it.
+ *
+ * The drag only claims a clearly sideways movement, so scrolling the chat is
+ * never mistaken for it. An arrow fades in behind the bubble as it moves and
+ * is fully lit at the point where letting go will count.
+ */
+function SwipeToReply({ onReply, children }: { onReply?: () => void; children: ReactNode }) {
+  const x = useSharedValue(0);
+
+  const pan = Gesture.Pan()
+    .enabled(!!onReply)
+    .activeOffsetX(12)
+    .failOffsetX(-12)
+    .failOffsetY([-12, 12])
+    .onUpdate((e) => {
+      // Follows the finger, then resists past the maximum instead of stopping dead.
+      const t = Math.max(0, e.translationX);
+      x.value = t <= SWIPE_MAX ? t : SWIPE_MAX + (t - SWIPE_MAX) * 0.15;
+    })
+    .onEnd(() => {
+      if (x.value >= SWIPE_TO_REPLY && onReply) scheduleOnRN(onReply);
+    })
+    .onFinalize(() => {
+      x.value = withSpring(0, { damping: 18, stiffness: 220 });
+    });
+
+  const moving = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
+  const arrow = useAnimatedStyle(() => ({
+    opacity: interpolate(x.value, [0, SWIPE_TO_REPLY], [0, 1], 'clamp'),
+    transform: [{ scale: interpolate(x.value, [0, SWIPE_TO_REPLY], [0.6, 1], 'clamp') }],
+  }));
+
+  return (
+    <GestureDetector gesture={pan}>
+      <View>
+        <Animated.View style={[styles.swipeArrow, arrow]} pointerEvents="none">
+          <ThemedText style={styles.replyGlyph}>
+            {/* Variation selector keeps Android off the emoji glyph. */}
+            {'\u21A9\uFE0E'}
+          </ThemedText>
+        </Animated.View>
+        <Animated.View style={moving}>{children}</Animated.View>
+      </View>
+    </GestureDetector>
   );
 }
 
@@ -133,83 +185,104 @@ export function AnswerBubble({
     const ink = author?.tint ? textOnTint(author.tint) : Colors.textOnAccent;
 
     return (
-      <View style={[styles.row, styles.rowOwn]}>
-        {canReply && onReply ? (
-          <ReplyButton onPress={onReply} name={replyLabel} selected={replySelected} />
-        ) : null}
-
-        <View style={styles.bubbleColumn}>
-          <ThemedText type="label" style={[styles.ownLabel, { color: tint }]}>
-            {author ? `${author.name} (you)` : 'You'}
-          </ThemedText>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityHint={canReply ? 'Long press to reply to this answer' : undefined}
-            disabled={!canReply}
-            onLongPress={onReply}
-            delayLongPress={250}
-            style={({ pressed }) => [
-              styles.bubble,
-              styles.bubbleOwn,
-              { backgroundColor: tint, borderColor: tint },
-              answer.timedOut && styles.bubbleSilent,
-              pressed && canReply && styles.bubblePressed,
-            ]}>
-            {replyTo ? (
-              <Quote answer={replyTo} author={replyToAuthor} onOwnBubble ink={ink} />
-            ) : null}
-            <ThemedText
-              type="body"
-              style={answer.timedOut ? styles.silentText : [styles.ownText, { color: ink }]}>
-              {body}
+      <SwipeToReply onReply={canReply ? onReply : undefined}>
+        <View style={[styles.row, styles.rowOwn]}>
+          <View style={[styles.bubbleColumn, styles.bubbleColumnOwn]}>
+            <ThemedText type="smallBold" style={[styles.name, { color: tint }]}>
+              {author ? `${author.name} (you)` : 'You'}
             </ThemedText>
-          </Pressable>
+            <View style={styles.bubbleLine}>
+              {canReply && onReply ? (
+                <ReplyButton onPress={onReply} name={replyLabel} selected={replySelected} />
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint={canReply ? 'Swipe right or long press to reply' : undefined}
+                accessibilityActions={
+                  canReply ? [{ name: 'longpress', label: `Reply to ${replyLabel}` }] : undefined
+                }
+                onAccessibilityAction={onReply}
+                disabled={!canReply}
+                onLongPress={onReply}
+                delayLongPress={250}
+                style={({ pressed }) => [
+                  styles.bubble,
+                  styles.bubbleOwn,
+                  { backgroundColor: tint },
+                  answer.timedOut && styles.bubbleSilent,
+                  replySelected && styles.bubbleReplying,
+                  pressed && canReply && styles.bubblePressed,
+                ]}>
+                {replyTo ? <Quote answer={replyTo} author={replyToAuthor} /> : null}
+                <ThemedText
+                  type="body"
+                  style={answer.timedOut ? styles.silentText : [styles.ownText, { color: ink }]}>
+                  {body}
+                </ThemedText>
+              </Pressable>
+            </View>
+          </View>
         </View>
-      </View>
+      </SwipeToReply>
     );
   }
 
   return (
-    <View style={styles.row}>
-      <View style={styles.gutter}>
-        {author ? (
-          <Avatar id={author.id} name={author.name} tint={author.tint} size={AVATAR} />
-        ) : null}
-      </View>
-
-      <View style={styles.bubbleColumn}>
-        {author ? (
-          <ThemedText type="label" style={{ color: author.tint || colorForId(author.id) }}>
-            {author.name}
-          </ThemedText>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityHint={canReply ? 'Long press to reply to this answer' : undefined}
-          disabled={!canReply}
-          onLongPress={onReply}
-          delayLongPress={250}
-          style={({ pressed }) => [
-            styles.bubble,
-            answer.timedOut && styles.bubbleSilent,
-            pressed && canReply && styles.bubblePressed,
-          ]}>
-          {replyTo ? (
-            <Quote answer={replyTo} author={replyToAuthor} onOwnBubble={false} />
+    <SwipeToReply onReply={canReply ? onReply : undefined}>
+      <View style={[styles.row, styles.rowOthers]}>
+        <View style={styles.gutter}>
+          {author ? (
+            <Avatar id={author.id} name={author.name} tint={author.tint} size={AVATAR} />
           ) : null}
-          <ThemedText type="body" style={answer.timedOut ? styles.silentText : undefined}>
-            {body}
-          </ThemedText>
-        </Pressable>
-      </View>
+        </View>
 
-      {canReply && onReply ? (
-        <ReplyButton onPress={onReply} name={replyLabel} selected={replySelected} />
-      ) : null}
-    </View>
+        <View style={styles.bubbleColumn}>
+          {author ? (
+            <ThemedText
+              type="smallBold"
+              style={[styles.name, { color: author.tint || colorForId(author.id) }]}>
+              {author.name}
+            </ThemedText>
+          ) : null}
+          <View style={styles.bubbleLine}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityHint={canReply ? 'Swipe right or long press to reply' : undefined}
+              accessibilityActions={
+                canReply ? [{ name: 'longpress', label: `Reply to ${replyLabel}` }] : undefined
+              }
+              onAccessibilityAction={onReply}
+              disabled={!canReply}
+              onLongPress={onReply}
+              delayLongPress={250}
+              style={({ pressed }) => [
+                styles.bubble,
+                styles.bubbleOthers,
+                answer.timedOut && styles.bubbleSilent,
+                replySelected && styles.bubbleReplying,
+                pressed && canReply && styles.bubblePressed,
+              ]}>
+              {replyTo ? <Quote answer={replyTo} author={replyToAuthor} /> : null}
+              <ThemedText type="body" style={answer.timedOut ? styles.silentText : undefined}>
+                {body}
+              </ThemedText>
+            </Pressable>
+            {canReply && onReply ? (
+              <ReplyButton onPress={onReply} name={replyLabel} selected={replySelected} />
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </SwipeToReply>
   );
 }
 
+/**
+ * A chat, not a form. Bubbles are sized to what was said — a one-word answer
+ * gets a small bubble, not a tall pill — with a tighter corner on the side the
+ * name is on, the way a messaging app marks who a bubble belongs to. Names are
+ * in normal case: in capitals they were louder than the answers under them.
+ */
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
@@ -219,84 +292,108 @@ const styles = StyleSheet.create({
   },
   rowOwn: {
     justifyContent: 'flex-end',
+    paddingLeft: Spacing.five,
+  },
+  /** Room on the right so a long answer still reads as somebody else's, not yours. */
+  rowOthers: {
+    paddingRight: Spacing.four,
   },
   gutter: {
     width: AVATAR,
   },
   bubbleColumn: {
     flexShrink: 1,
-    gap: Spacing.one,
+    gap: 3,
     alignItems: 'flex-start',
   },
-  ownLabel: {
-    // Overridden by the seat's own tint; this is the fallback for a seat
-    // with none, and has to read as a label rather than fill anything.
-    color: Colors.accentText,
-    alignSelf: 'flex-end',
+  bubbleColumnOwn: {
+    alignItems: 'flex-end',
+  },
+  /** The bubble and its reply button, centred on each other. */
+  bubbleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+  },
+  name: {
+    fontSize: 13,
+    lineHeight: 17,
+    paddingHorizontal: 4,
+  },
+  replyButton: {
+    width: REPLY_BUTTON,
+    height: REPLY_BUTTON,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.backgroundElement,
+  },
+  replyButtonSelected: {
+    backgroundColor: Colors.accent,
+  },
+  replyButtonPressed: {
+    transform: [{ scale: 0.9 }],
+    backgroundColor: Colors.backgroundSelected,
   },
   bubble: {
-    backgroundColor: Colors.backgroundElement,
+    flexShrink: 1,
+    minWidth: 40,
+    borderRadius: 20,
+    // Transparent until it matters: a dashed edge on a silent turn, the accent
+    // on the answer being replied to. Always there, so neither changes the size.
     borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.lg,
-    borderTopLeftRadius: Radius.sm,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: 10,
-    maxWidth: '100%',
+    borderColor: 'transparent',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  bubbleOthers: {
+    backgroundColor: Colors.backgroundElement,
+    borderTopLeftRadius: 6,
   },
   bubbleOwn: {
     backgroundColor: Colors.accent,
-    borderColor: Colors.accent,
-    borderTopLeftRadius: Radius.lg,
-    borderBottomRightRadius: Radius.sm,
-    maxWidth: '82%',
+    borderTopRightRadius: 6,
   },
   bubblePressed: {
     opacity: 0.75,
   },
-  /** Matches the avatar gutter on the other side, so the row stays balanced. */
-  replyButton: {
-    alignSelf: 'center',
+  /** Sits behind the left edge of the row, uncovered as the bubble is dragged. */
+  swipeArrow: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    top: Spacing.three,
     width: AVATAR,
-    height: AVATAR,
-    borderRadius: Radius.pill,
-    backgroundColor: Colors.backgroundElement,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  replyButtonActive: {
-    backgroundColor: Colors.accentMuted,
-  },
-  replyButtonPressed: {
-    backgroundColor: Colors.accentMuted,
-    transform: [{ scale: 0.92 }],
-  },
   replyGlyph: {
-    fontSize: 15,
-    lineHeight: 18,
-    color: Colors.textSecondary,
-  },
-  replyGlyphActive: {
+    fontSize: 18,
+    lineHeight: 22,
     color: Colors.accentText,
+  },
+  /** The answer the composer is currently aimed at. */
+  bubbleReplying: {
+    borderColor: Colors.accentText,
   },
   quote: {
     alignSelf: 'stretch',
     borderLeftWidth: 3,
-    borderRadius: Radius.sm,
+    borderRadius: 10,
     backgroundColor: Colors.backgroundInset,
-    paddingVertical: 6,
-    paddingHorizontal: Spacing.two,
-    marginBottom: Spacing.two,
-    gap: 2,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    marginTop: 4,
+    marginBottom: 6,
+    marginHorizontal: -6,
   },
-  quoteOwn: {
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+  quoteName: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   quoteText: {
     color: Colors.textSecondary,
-  },
-  quoteTextOwn: {
-    color: 'rgba(255, 255, 255, 0.85)',
   },
   /** A turn that expired with nothing typed. */
   bubbleSilent: {
