@@ -1,4 +1,5 @@
 import { Link, useRouter } from 'expo-router';
+import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 
 import { RoomSizePicker } from '@/components/game/room-size-picker';
@@ -7,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
-import { countWord } from '@/game/types';
 
 /**
  * The mark: a ring of misters around the one that is not a person. It took the
@@ -21,7 +21,7 @@ import { countWord } from '@/game/types';
 const LOGO = require('../../assets/images/logo.png');
 
 /** Wide enough to read the robot in the middle, narrow enough to leave the wordmark room. */
-const LOGO_SIZE = 220;
+const LOGO_SIZE = 270;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -32,75 +32,139 @@ export default function HomeScreen() {
 
   return (
     <Screen>
-      <View style={styles.hero}>
-        <Image
-          source={LOGO}
-          style={styles.logo}
-          resizeMode="contain"
-          accessibilityRole="image"
-          accessibilityLabel="An Impostor"
-        />
-
-        <View style={styles.wordmark}>
-          <ThemedText type="display" style={styles.title}>
-            An Impostor
-          </ThemedText>
-          <ThemedText type="body" themeColor="textSecondary" style={styles.tagline}>
-            You and {countWord(roomSize - 1)} strangers in a chatroom. One of them isn&apos;t a
-            person. Vote it out before it outlasts you.
-          </ThemedText>
+      <View style={styles.body}>
+        {/* The two ways off this screen that are not playing. They float in the
+          corners, over the logo's empty corners rather than in a row of their
+          own, so the logo can sit right up at the top. */}
+        <View style={styles.topBar}>
+          <CornerLink
+            href="/how-to-play"
+            label="How to play"
+            symbol={{
+              ios: 'questionmark',
+              android: 'question_mark',
+              web: 'question_mark',
+            }}
+          />
+          <CornerLink
+            href="/settings"
+            label="Settings"
+            symbol={{
+              ios: 'gearshape.fill',
+              android: 'settings',
+              web: 'settings',
+            }}
+          />
         </View>
-      </View>
 
-      <View style={styles.actions}>
-        {notice === 'removedForBeingAway' ? (
-          // Landing back on the home screen mid-match with no explanation reads
-          // as the app having crashed. This says what actually happened.
-          <Pressable
-            accessibilityRole="button"
-            accessibilityHint="Dismiss"
-            onPress={dismissNotice}
-            style={({ pressed }) => [styles.notice, pressed && styles.pressed]}>
-            <ThemedText type="smallBold">You were away too long</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Your connection was gone for too long, so the match carried on without you. Tap to
-              dismiss.
+        <View style={styles.hero}>
+          <Image
+            source={LOGO}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityRole="image"
+            accessibilityLabel="AI: An Impostor"
+          />
+
+          <View style={styles.wordmark}>
+            {/* A touch under the display size so the full title stays on one line
+              on a small phone: wrapped after "AI:" it reads as two things. */}
+            <ThemedText type="display" style={styles.title}>
+              <ThemedText type="display" style={styles.titleAccent}>
+                AI:
+              </ThemedText>{' '}
+              An Impostor
             </ThemedText>
-          </Pressable>
-        ) : null}
-        <RoomSizePicker value={roomSize} onChange={setRoomSize} />
-        <Button label="Find a game" onPress={handlePlay} />
+            {/* One line. The rest of the pitch — the chat, the vote — is what the
+              picker and the game itself say; a paragraph here was just the gap
+              between the logo and the button made longer. */}
+            <ThemedText type="subtitle" themeColor="textSecondary" style={styles.tagline}>
+              One of the strangers isn&apos;t a person.
+            </ThemedText>
+          </View>
+        </View>
 
-        <View style={styles.footerLinks}>
-          <Link href="/how-to-play" asChild>
-            <Pressable hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedText type="smallBold" themeColor="textSecondary">
-                How to play
-              </ThemedText>
-            </Pressable>
-          </Link>
-
-          <View style={styles.dot} />
-
-          <Link href="/settings" asChild>
-            <Pressable hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedText type="smallBold" themeColor="textSecondary">
-                Settings
-              </ThemedText>
-            </Pressable>
-          </Link>
+        {/* The button straight under the picker, and the whole stack centred on
+          the screen, so the leftover height is split above and below it. */}
+        <View style={styles.actions}>
+          <View style={styles.choices}>
+            {notice === 'removedForBeingAway' ? (
+              // Landing back on the home screen mid-match with no explanation reads
+              // as the app having crashed. This says what actually happened.
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint="Dismiss"
+                onPress={dismissNotice}
+                style={({ pressed }) => [styles.notice, pressed && styles.pressed]}>
+                <ThemedText type="smallBold">You were away too long</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Your connection was gone for too long, so the match carried on without you. Tap to
+                  dismiss.
+                </ThemedText>
+              </Pressable>
+            ) : null}
+            <RoomSizePicker value={roomSize} onChange={setRoomSize} />
+          </View>
+          <Button label="Find a game" onPress={handlePlay} />
         </View>
       </View>
     </Screen>
   );
 }
 
+/** A round icon button in the top bar. */
+function CornerLink({
+  href,
+  label,
+  symbol,
+}: {
+  href: '/how-to-play' | '/settings';
+  label: string;
+  symbol: SymbolViewProps['name'];
+}) {
+  return (
+    <Link href={href} asChild>
+      {/* The circle is its own view: `Link asChild` hands the Pressable a style
+          of its own, and a style function on it was being dropped. */}
+      <Pressable accessibilityRole="button" accessibilityLabel={label} hitSlop={8}>
+        {({ pressed }) => (
+          <View style={[styles.cornerButton, pressed && styles.pressed]}>
+            <SymbolView name={symbol} size={20} tintColor={Colors.textSecondary} />
+          </View>
+        )}
+      </Pressable>
+    </Link>
+  );
+}
+
 const styles = StyleSheet.create({
-  hero: {
+  body: {
     flex: 1,
     justifyContent: 'center',
+  },
+  topBar: {
+    position: 'absolute',
+    top: Spacing.two,
+    left: 0,
+    right: 0,
+    zIndex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  cornerButton: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
-    gap: Spacing.five,
+    justifyContent: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.backgroundElement,
+  },
+  hero: {
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingTop: Spacing.two,
   },
   logo: {
     width: LOGO_SIZE,
@@ -108,11 +172,16 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   wordmark: {
-    gap: Spacing.three,
+    gap: Spacing.two,
     alignItems: 'center',
   },
   title: {
     textAlign: 'center',
+    fontSize: 40,
+    lineHeight: 44,
+  },
+  titleAccent: {
+    color: Colors.accentText,
   },
   tagline: {
     textAlign: 'center',
@@ -120,7 +189,11 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: Spacing.three,
-    paddingBottom: Spacing.four,
+    paddingTop: Spacing.four,
+    paddingBottom: Spacing.three,
+  },
+  choices: {
+    gap: Spacing.three,
   },
   notice: {
     gap: Spacing.one,
@@ -129,19 +202,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.warning,
     backgroundColor: Colors.warningMuted,
-  },
-  footerLinks: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.three,
-    paddingTop: Spacing.three,
-  },
-  dot: {
-    width: 3,
-    height: 3,
-    borderRadius: Radius.pill,
-    backgroundColor: Colors.textMuted,
   },
   pressed: {
     opacity: 0.6,
