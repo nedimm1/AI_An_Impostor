@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { FigureDisc, VERDICT_ART } from '@/components/game/figure-disc';
+import { FigureDisc, PORTRAIT } from '@/components/game/figure-disc';
 import { ThemedText } from '@/components/themed-text';
 import { Avatar } from '@/components/ui/avatar';
 import { Colors, Radius, Spacing } from '@/constants/theme';
@@ -45,9 +45,9 @@ export function VerdictHero({ room }: { room: Room }) {
   const tiedUp = (room.pendingTiebreaker ?? [])
     .map((id) => playerById(room, id))
     .filter((p): p is Player => p != null);
-  // The seat the picture is about. The robot is always the impostor, so it
-  // wears the impostor's colour even when the vote put a person out; otherwise
-  // the circle is whoever this vote put out.
+  // The seat the picture is about, worn as the whole disc. The robot is always
+  // the impostor, so it wears the impostor's colour even when the vote put a
+  // person out; otherwise the circle is whoever this vote put out.
   const portraitColor =
     (room.outcome ? impostor : eliminated)?.tint || Colors.backgroundSelected;
 
@@ -60,7 +60,7 @@ export function VerdictHero({ room }: { room: Room }) {
   if (room.outcome === 'humans') {
     tone = 'success';
     label = 'Humans win';
-    art = <FigureDisc art={VERDICT_ART.impostorCaught} color={portraitColor} size={160} ring={Colors.background} />;
+    art = <FigureDisc art={PORTRAIT.robotOut} color={portraitColor} size={160} ring={Colors.background} />;
     headline = (
       <ThemedText type="title" style={styles.centered}>
         <Name player={impostor} /> was the impostor
@@ -70,7 +70,7 @@ export function VerdictHero({ room }: { room: Room }) {
   } else if (room.outcome === 'impostor') {
     tone = 'danger';
     label = 'Impostor wins';
-    art = <FigureDisc art={VERDICT_ART.impostorWins} color={portraitColor} size={160} ring={Colors.background} />;
+    art = <FigureDisc art={PORTRAIT.robot} color={portraitColor} size={160} ring={Colors.background} />;
     const personOut = eliminated && eliminated.id !== room.impostorId ? eliminated : null;
     headline = (
       <View style={styles.headlineStack}>
@@ -121,7 +121,7 @@ export function VerdictHero({ room }: { room: Room }) {
   } else if (eliminated) {
     tone = 'neutral';
     label = 'Not the impostor';
-    art = <FigureDisc art={VERDICT_ART.notTheImpostor} color={portraitColor} size={160} ring={Colors.background} />;
+    art = <FigureDisc art={PORTRAIT.misterOut} color={portraitColor} size={160} ring={Colors.background} />;
     headline = (
       <ThemedText type="title" style={styles.centered}>
         {youWereVotedOut ? (
@@ -322,7 +322,7 @@ export function VoteBreakdown({ room }: { room: Room }) {
                   {isImpostor ? (
                     <RobotFace room={room} tint={player.tint} size={52} />
                   ) : (
-                    <FigureDisc art={VERDICT_ART.notTheImpostor} color={player.tint} size={52} />
+                    <FigureDisc art={PORTRAIT.misterOut} color={player.tint} size={52} />
                   )}
                   <ThemedText type="smallBold" numberOfLines={1} style={styles.outName}>
                     {player.isYou ? 'You' : player.name}
@@ -367,7 +367,7 @@ export function VoteBreakdown({ room }: { room: Room }) {
 function RobotFace({ room, tint, size }: { room: Room; tint: string; size: number }) {
   return (
     <FigureDisc
-      art={room.outcome === 'humans' ? VERDICT_ART.impostorCaught : VERDICT_ART.impostorWins}
+      art={room.outcome === 'humans' ? PORTRAIT.robotOut : PORTRAIT.robot}
       color={tint}
       size={size}
     />

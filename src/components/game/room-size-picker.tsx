@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { LinearTransition, ZoomIn, ZoomOut } from 'react-native-reanimated';
 
-import { FigureDisc, VERDICT_ART } from '@/components/game/figure-disc';
+import { FigureDisc, PORTRAIT, ROBOT_GROUND } from '@/components/game/figure-disc';
 import { ThemedText } from '@/components/themed-text';
 import { Avatar } from '@/components/ui/avatar';
 import { Colors, Radius, Spacing } from '@/constants/theme';
@@ -57,8 +57,8 @@ function lineup(size: RoomSize): Seat[] {
   const middle = Math.floor(size / 2);
   return [
     ...people.slice(0, middle),
-    // Black, like the logo: on a red disc the robot's red eyes and antenna disappeared.
-    { key: 'robot', tint: '#000000', robot: true },
+    // Black, like the logo — and the ground his portrait carries with it.
+    { key: 'robot', tint: ROBOT_GROUND, robot: true },
     ...people.slice(middle),
   ];
 }
@@ -101,12 +101,7 @@ export function RoomSizePicker({
             exiting={ZoomOut.duration(160)}
             layout={LinearTransition.duration(220)}>
             {seat.robot ? (
-              <FigureDisc
-                art={VERDICT_ART.impostorWins}
-                color={seat.tint}
-                size={face}
-                ring={Colors.accent}
-              />
+              <FigureDisc art={PORTRAIT.robot} color={seat.tint} size={face} ring={Colors.accent} />
             ) : (
               <Avatar id={seat.key} name="" tint={seat.tint} size={face} />
             )}
