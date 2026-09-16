@@ -19,6 +19,57 @@ import {
   type Room,
 } from './types';
 
+/**
+ * One ballot, by name.
+ *
+ * Every player saw this: the result screen puts each voter's face under the
+ * name they picked, and it stays true for the rest of the match. So it is not
+ * a secret being handed over — it is the impostor being given the same sheet
+ * of paper everybody else is still holding, without which it cannot answer
+ * the plainest question in the game. It voted for somebody two rounds ago and
+ * the room can see who.
+ *
+ * `yours` is drawn out on its own because that is the one line it will be
+ * asked to account for, and a model made to find itself in a list will
+ * sometimes find the wrong seat.
+ *
+ * The round each vote was cast on is deliberately not here. It was, while the
+ * impostor answered "why did you vote for me" with a reason: a reason has to
+ * come out of something, and without the round it invented one. It does not
+ * give reasons any more — it shrugs, every time, however hard it is pushed —
+ * so the round would be evidence for a case it is never going to make.
+ */
+export type ImpostorBallotRecord = {
+  /** The round it was cast in. A tiebreaker's second ballot shares the round. */
+  round: number;
+  yours: string | null;
+  /** Everyone who named somebody, in no particular order. Abstentions are absent. */
+  votes: { voter: string; target: string }[];
+  /** Who it removed, or null when it tied or settled on nobody. */
+  eliminated: string | null;
+};
+
+/** Every ballot so far, oldest first, as names. Empty before the first one. */
+function ballotsFor(room: Room): ImpostorBallotRecord[] {
+  const nameOf = (id: string) => playerById(room, id)?.name ?? null;
+
+  return room.ballots.map((ballot) => {
+    const votes: { voter: string; target: string }[] = [];
+    for (const [voterId, targetId] of Object.entries(ballot.votes)) {
+      const voter = nameOf(voterId);
+      const target = nameOf(targetId);
+      if (voter && target) votes.push({ voter, target });
+    }
+
+    return {
+      round: ballot.round,
+      yours: room.impostorId ? nameOf(ballot.votes[room.impostorId] ?? '') : null,
+      votes,
+      eliminated: ballot.eliminatedId ? nameOf(ballot.eliminatedId) : null,
+    };
+  });
+}
+
 /** What the impostor is allowed to know about the room. */
 export type ImpostorTurn = {
   roomId: string;
@@ -65,6 +116,12 @@ export type ImpostorTurn = {
    * gone cannot answer, cannot be voted for, and cannot take any heat off it.
    */
   stillIn: string[];
+  /**
+   * Every vote the room has been shown, oldest first. It can still see all of
+   * them and can still ask about any of them — most likely of all during a
+   * tiebreaker, where the vote that tied is the reason everybody is talking.
+   */
+  ballots: ImpostorBallotRecord[];
   /** The room is talking out a tied vote rather than answering a prompt. */
   tiebreaker: boolean;
   /** It is one of the two the room is deciding between. */
@@ -106,6 +163,7 @@ export function impostorTurn(room: Room, replyToId: string | null = null): Impos
     turnNumber: currentTurnNumber(room),
     turnsEach: room.settings.turnsEach,
     stillIn: survivors(room).map((p) => p.name),
+    ballots: ballotsFor(room),
     tiebreaker: room.tiebreaker !== null,
     accused: room.tiebreaker?.includes(room.impostorId ?? '') ?? false,
     replyTo:
@@ -142,6 +200,14 @@ export type ImpostorBallot = {
   roundLines: { name: string; text: string }[];
   /** Everyone it can name. Never itself — that is not a vote, it is a bug. */
   candidates: string[];
+  /**
+   * How it has voted so far, and how everybody else has.
+   *
+   * Carried because this vote will be read against those ones: switching from
+   * one name to another is a thing the room can see, and so is voting for
+   * somebody twice.
+   */
+  ballots: ImpostorBallotRecord[];
   /** The two a tied vote put up, if the room is on its second ballot. */
   accused: string[];
 };
@@ -169,6 +235,7 @@ export function impostorBallot(room: Room): ImpostorBallot {
         text: answer.text,
       })),
     candidates: alive.filter((p) => p.id !== room.impostorId).map((p) => p.name),
+    ballots: ballotsFor(room),
     accused: (room.tiebreaker ?? [])
       .map((id) => playerById(room, id)?.name)
       .filter((name): name is string => name !== undefined),

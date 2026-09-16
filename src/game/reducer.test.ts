@@ -268,6 +268,55 @@ describe('the ballot', () => {
     expect(Object.keys(room(closed).votes)).toHaveLength(0);
     expect(room(closed).phase).toBe('verdict');
   });
+
+  /*
+   * The result screen shows the room who voted for whom and the room does not
+   * forget it when the next question comes up. `votes` has to be wiped — it is
+   * the live ballot — so the record it leaves behind is what "why did you vote
+   * for me" is asked about a round later.
+   */
+  it('leaves the ballot behind for the rounds that come after it', () => {
+    // Not the impostor: catching it ends the match, and a match that is over
+    // has no next round to carry anything into.
+    const voting = answerEveryTurn(seated());
+    const voted = survivors(room(voting)).reduce(
+      (acc, voter) =>
+        roomReducer(acc, { type: 'castVote', voterId: voter.id, targetId: 'p_deniz' }),
+      voting
+    );
+
+    expect(room(voted).ballots).toHaveLength(1);
+    expect(room(voted).ballots[0].eliminatedId).toBe('p_deniz');
+    expect(room(voted).ballots[0].round).toBe(1);
+
+    const next = play(voted, { type: 'nextRound' });
+    expect(room(next).votes).toEqual({});
+    expect(room(next).ballots[0].votes[YOUR_ID]).toBe('p_deniz');
+    expect(room(next).ballots[0].eliminatedId).toBe('p_deniz');
+  });
+
+  /*
+   * "you voted for him last time as well" is a question about the run rather
+   * than about the round, so the run is what is kept.
+   */
+  it('keeps every round\'s ballot, oldest first', () => {
+    const voteAll = (state: Room | null, targetId: string) =>
+      survivors(room(state)).reduce(
+        (acc, voter) => roomReducer(acc, { type: 'castVote', voterId: voter.id, targetId }),
+        state
+      );
+
+    let state: Room | null = voteAll(answerEveryTurn(seated()), 'p_deniz');
+    state = play(state, { type: 'nextRound' });
+    state = voteAll(answerEveryTurn(state), 'p_kofi');
+
+    expect(room(state).ballots.map((b) => b.round)).toEqual([1, 2]);
+    expect(room(state).ballots.map((b) => b.eliminatedId)).toEqual(['p_deniz', 'p_kofi']);
+  });
+
+  it('has no ballots to remember before the first one', () => {
+    expect(room(answerEveryTurn(seated())).ballots).toEqual([]);
+  });
 });
 
 describe('ties', () => {

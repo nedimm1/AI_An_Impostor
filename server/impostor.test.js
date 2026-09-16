@@ -19,11 +19,15 @@ const {
   cleanText,
   isChallenge,
   isDisagreement,
+  isVoteQuestion,
+  voteQuestionsTo,
+  votePrompt,
   readSituation,
   stanceTable,
   buildMessages,
   coAccused,
   nameUsePolicy,
+  asksTheRoom,
   readRoom,
   repliesTo,
   roomNote,
@@ -35,6 +39,8 @@ const {
   BITS,
   bitFor,
   resolveBit,
+  REGISTERS,
+  registerFor,
   systemPrompt,
   swearBack,
   hasDegenerated,
@@ -312,9 +318,21 @@ describe('having a view of its own', () => {
   // what it liked. The first time round the room is for answering.
   it('answers the question on the turn everybody is answering on', () => {
     const sample = stances({});
-    expect(new Set(sample)).toEqual(new Set(['own', 'tangent']));
+    expect(new Set(sample)).toEqual(new Set(['own', 'tangent', 'pass']));
     expect(sample.filter((stance) => stance === 'own').length / sample.length)
-      .toBeGreaterThan(0.8);
+      .toBeGreaterThan(0.75);
+  });
+
+  /*
+   * Nobody has a view on all forty-three of them. The seat that produces a
+   * considered answer to every single question is the seat being asked to.
+   */
+  it('sometimes has no answer at all, which is a whole message', () => {
+    const sample = stances({});
+    const passed = sample.filter((stance) => stance === 'pass').length / sample.length;
+
+    expect(passed).toBeGreaterThan(0.03);
+    expect(passed).toBeLessThan(0.15);
   });
 
   it('has views once it has answered, and is not shy about them', () => {
@@ -747,7 +765,97 @@ describe('a room that has stopped answering the question', () => {
 
   it('still owes an answer to a room that is still asking for one', () => {
     expect(answerShape(true, {}).answering).toBe(true);
-    expect(answerShape(true, { talking: true }).answering).toBe(false);
+  });
+
+  /*
+   * Mostly it joins what is being said. Not always: people do drop their own
+   * answer into a room mid-argument, and a seat that never once does it is a
+   * seat that always does the correct thing.
+   */
+  it('mostly joins a room that has got talking, and sometimes does not', () => {
+    const draws = Array.from(
+      { length: 20000 },
+      () => answerShape(true, { talking: true }).answering
+    );
+    const answered = draws.filter(Boolean).length / draws.length;
+
+    expect(answered).toBeGreaterThan(0.1);
+    expect(answered).toBeLessThan(0.3);
+  });
+
+  /*
+   * Two lines is a conversation: somebody says Egypt, somebody writes
+   * "overrated imo" under it. Counting two conversational lines missed that,
+   * because only the second line in an exchange is aimed — so the impostor
+   * walked into the middle of it with a cold answer of its own.
+   */
+  it('reads one aimed line with a view in it as a conversation starting', () => {
+    const opened = [
+      { name: 'Nedim', text: 'egypt', replyToName: null },
+      { name: 'Emil', text: 'overrated imo', replyToName: 'Nedim' },
+    ];
+    expect(readRoom(opened, 'AI').talking).toBe(true);
+
+    const asked = [
+      { name: 'Nedim', text: 'egypt', replyToName: null },
+      { name: 'Emil', text: 'wait when did you go', replyToName: 'Nedim' },
+    ];
+    expect(readRoom(asked, 'AI').talking).toBe(true);
+  });
+
+  it('does not read a reaction or an agreement as one', () => {
+    const reacted = [
+      { name: 'Nedim', text: 'egypt', replyToName: null },
+      { name: 'Emil', text: 'lol egypt', replyToName: 'Nedim' },
+    ];
+    expect(readRoom(reacted, 'AI').talking).toBe(false);
+
+    const agreed = [
+      { name: 'Nedim', text: 'egypt', replyToName: null },
+      { name: 'Emil', text: 'yeah same honestly, been wanting to go', replyToName: 'Nedim' },
+    ];
+    expect(readRoom(agreed, 'AI').talking).toBe(false);
+  });
+
+  /*
+   * A fifth of the draws into a three-line room came out as "same" or "yeah
+   * same" and nothing else. Agreement is most of what a chat is made of, but
+   * it needs something to land on: as the whole of the first thing you say
+   * into a conversation that has barely started, it is a turn spent saying
+   * nothing.
+   */
+  it('reaches for bare agreement far less in a room two lines deep', () => {
+    const rate = (over) => {
+      const draws = Array.from(
+        { length: 20000 },
+        () => answerShape(true, { talking: true, ...over }).stance
+      );
+      return draws.filter((stance) => stance === 'agree').length / draws.length;
+    };
+
+    expect(rate({ shallow: true })).toBeLessThan(rate({}) / 2);
+    // Still possible, because people do just agree.
+    expect(rate({ shallow: true })).toBeGreaterThan(0.02);
+  });
+
+  it('counts the room as shallow off the lines other people have sent', () => {
+    const opened = [
+      { name: 'Nedim', text: 'egypt', replyToName: null },
+      { name: 'Emil', text: 'overrated imo', replyToName: 'Nedim' },
+    ];
+    expect(readRoom(opened, 'AI').lines).toBe(2);
+    expect(readRoom([...opened, { name: 'Kofi', text: 'been twice, its fine' }], 'AI').lines).toBe(
+      3
+    );
+  });
+
+  /* A reply aimed at the impostor is a different brief, not a conversation. */
+  it('does not count a line written at itself', () => {
+    const atIt = [
+      { name: 'Nedim', text: 'egypt', replyToName: null },
+      { name: 'Emil', text: 'nah thats overrated', replyToName: 'AI' },
+    ];
+    expect(readRoom(atIt, 'AI').talking).toBe(false);
   });
 
   it('joins in instead, and its answer comes out inside that', () => {
@@ -762,13 +870,32 @@ describe('a room that has stopped answering the question', () => {
   });
 
   it('is told to join the conversation rather than answer over it', () => {
-    const content = lastMessage({ roundLines: ARGUING, turnNumber: 1 });
+    const content = lastMessage(
+      { roundLines: ARGUING, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: false }
+    );
     expect(content).toContain('the room has stopped going round it');
     expect(content).not.toContain('it is your turn to put up yours');
   });
 
+  /*
+   * What the room has got onto is a thing, not a question, and it is allowed
+   * to know the thing. Its own answer arrives sideways or not at all.
+   */
+  it('tells it that it can have been to the place they are arguing about', () => {
+    const content = lastMessage(
+      { roundLines: ARGUING, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: false }
+    );
+    expect(content).toContain('It is a thing now, not a question');
+    expect(content).toContain('gets your answer in sideways');
+  });
+
   it('still answers when the room is going round the question', () => {
-    const content = lastMessage({ roundLines: ANSWERING, turnNumber: 1 });
+    const content = lastMessage(
+      { roundLines: ANSWERING, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: true, stance: 'own' }
+    );
     expect(content).toContain('it is your turn to put up yours');
   });
 
@@ -930,7 +1057,7 @@ describe('taking somebody else\'s side', () => {
     const keys = stanceTable({ answering: true, challenged: true, argument: true }).map(
       (o) => o.key
     );
-    expect(keys).toEqual(['own', 'tangent']);
+    expect(keys).toEqual(['own', 'tangent', 'pass']);
   });
 });
 
@@ -1399,5 +1526,340 @@ describe('the name behind the handle', () => {
     const rooms = Array.from({ length: 400 }, (_, i) => `rm_${i.toString(36)}`);
     const pairs = new Set(rooms.map((r) => `${nameFor(r)}`));
     expect(pairs.size).toBeGreaterThan(10);
+  });
+});
+
+/**
+ * Being asked about a vote everybody can see.
+ *
+ * The result screen draws each vote with the voter's face under the name they
+ * picked, so the ballot is public and stays public. Two things were wrong
+ * with that. The impostor could not see its own vote at all — it is the one
+ * player at the table who was not handed the sheet everybody else is holding
+ * — and "why did you vote for me" arrived as an accusation, because `vote` is
+ * in the accusation markers, so a plain question got a defence of its own
+ * humanity for an answer.
+ */
+describe('being asked about its vote', () => {
+  const BALLOTS = [
+    {
+      round: 1,
+      yours: 'Emil',
+      eliminated: 'Emil',
+      votes: [
+        { voter: 'AI', target: 'Emil' },
+        { voter: 'Nedim', target: 'Emil' },
+      ],
+    },
+    {
+      round: 2,
+      yours: 'Nedim',
+      eliminated: null,
+      votes: [
+        { voter: 'AI', target: 'Nedim' },
+        { voter: 'Nedim', target: 'Emil' },
+        { voter: 'Kofi', target: 'Nedim' },
+      ],
+    },
+  ];
+
+  const asked = {
+    ballots: BALLOTS,
+    roundLines: [
+      ...ROOM,
+      { name: 'Nedim', text: 'why did you vote for me', replyToName: 'AI' },
+    ],
+  };
+
+  /*
+   * The follow-up rarely says "vote" again — it is "no but why me though",
+   * written at the shrug it just got — so what marks the second push is the
+   * shape of it and not the word.
+   */
+  const pressed = {
+    ballots: BALLOTS,
+    roundLines: [
+      ...ROOM,
+      { name: 'Nedim', text: 'why did you vote for me', replyToName: 'AI' },
+      { name: 'AI', text: 'had to be someone', replyToName: 'Nedim' },
+      { name: 'Nedim', text: 'no but why me', replyToName: 'AI' },
+    ],
+  };
+
+  it('tells a question about the ballot apart from a charge', () => {
+    expect(isVoteQuestion('why did you vote for me')).toBe(true);
+    expect(isVoteQuestion('you voted me lol')).toBe(true);
+
+    // Still open, still a threat: that one belongs with the accusations.
+    expect(isVoteQuestion('im voting you')).toBe(false);
+    // And a charge that happens to mention the ballot is a charge.
+    expect(isVoteQuestion('you voted kofi and youre the ai')).toBe(false);
+  });
+
+  it('picks up the question whether it is named or replied to', () => {
+    const named = voteQuestionsTo(
+      [{ name: 'Nedim', text: 'AI why did you vote for me', replyToName: null }],
+      'AI'
+    );
+    const replied = voteQuestionsTo(asked.roundLines, 'AI');
+
+    expect(named).toHaveLength(1);
+    expect(replied).toHaveLength(1);
+  });
+
+  it('does not put it into a defence of being human', () => {
+    expect(accusationsAgainst(asked.roundLines, 'AI')).toHaveLength(0);
+    expect(lastMessage(asked)).not.toContain('accused you of being the AI');
+  });
+
+  it('hands it the vote it actually cast', () => {
+    const content = lastMessage(asked);
+    expect(content).toContain('you voted for Nedim');
+    expect(content).toContain('Kofi voted for Nedim');
+    expect(content).toContain('asked you about your vote');
+  });
+
+  /*
+   * "you voted for him last time as well" is a question about the run. One
+   * round of it cannot answer that, so every round goes in — a match is four
+   * rounds long, so this is twenty lines at the very most.
+   */
+  it('hands it the earlier rounds too, not just the last one', () => {
+    const content = lastMessage(asked);
+    expect(content).toContain('Round 1 - Emil went');
+    expect(content).toContain('Round 2 - nobody went');
+  });
+
+  it('says out loud when it has voted for the same player twice', () => {
+    const twice = {
+      ...asked,
+      ballots: BALLOTS.map((ballot) => ({ ...ballot, yours: 'Nedim' })),
+    };
+    expect(lastMessage(twice)).toContain('not the first time you have voted for Nedim');
+    expect(lastMessage(asked)).not.toContain('not the first time');
+  });
+
+  /*
+   * It never hands over its reasoning, however hard it is pushed.
+   *
+   * A reason has to come out of something, and the only somethings available
+   * are claims about people who are sitting right there and can scroll back
+   * through the round to check them — so it invented, and the invented half
+   * was always the checkable half: "you said pizza like ten times" (it was
+   * three), "you kept saying pizza more than anyone else" (they all did). A
+   * shrug has nothing in it for the room to take apart.
+   */
+  it('never gives a reason, only a shrug', () => {
+    const content = lastMessage(asked);
+
+    expect(content).toContain('You do not have a reason and you are not going to produce one');
+    expect(content).toContain('idk i didnt know who else to vote for');
+    expect(content).toContain('do not explain');
+    // It still cannot deny the vote: the room is looking at it.
+    expect(content).toContain('do not name anybody else');
+  });
+
+  it('holds the same answer when they will not let it go', () => {
+    const content = lastMessage(pressed);
+
+    expect(content).toContain('They have asked again, and the answer is the same one');
+    expect(content).toContain('shorter and flatter');
+    // The second ask is where a model caves and starts explaining.
+    expect(content).toContain('Do not start explaining because somebody pushed you');
+  });
+
+  /* Being accused is the other way the room pushes, and it changes nothing. */
+  it('holds it under accusation too', () => {
+    const accusedToo = {
+      ...asked,
+      roundLines: [...asked.roundLines, { name: 'Kofi', text: 'AI is the bot, obviously' }],
+    };
+    expect(lastMessage(accusedToo)).toContain('They have asked again');
+  });
+
+  /*
+   * The ballot is only worth sending when it is the subject. On an ordinary
+   * turn a list of who voted for whom is one more thing to have an opinion
+   * about, and it will.
+   */
+  it('says nothing about the ballot when nobody has brought it up', () => {
+    const quiet = lastMessage({ ballots: BALLOTS });
+    expect(quiet).not.toContain('Every vote in this match');
+  });
+
+  it('brings it up unasked on a tiebreaker, where it is why they are talking', () => {
+    const tie = lastMessage({ ballots: BALLOTS, tiebreaker: true, accused: true });
+    expect(tie).toContain('Every vote in this match');
+  });
+
+  it('has nothing to say about a ballot that has not happened', () => {
+    const firstRound = { ...asked, ballots: [] };
+    expect(lastMessage(firstRound)).not.toContain('you voted for');
+  });
+
+  /*
+   * The vote used to be described to the model as secret - "Nobody can see
+   * your individual vote. Only the final vote totals are shown." - which was
+   * true when it was written and is not now. A model told its vote is private
+   * has no reason to weigh a pick it will be asked about out loud.
+   */
+  it('does not tell it the ballot is secret', () => {
+    const prompt = votePrompt({ name: 'AI' });
+    expect(prompt).toContain('Everybody will see who you picked');
+    expect(prompt).not.toMatch(/nobody can see your (individual )?vote/i);
+    expect(prompt).toContain('Would that name need explaining?');
+  });
+});
+
+
+/**
+ * How long this seat talks, for a whole match rather than for a turn.
+ *
+ * Every message was already drawn from a length table, but always the same
+ * one, so every match came out at the same average: a seat that mostly sends
+ * eight to thirteen words, every round, in every room. Real people are not
+ * distributed like that - one of them answers everything in two words all
+ * evening - and what gives a seat away is not the length of a message, it is
+ * the length of all of them together.
+ */
+describe('how much this one talks', () => {
+  const band = (register, runs = 20000) =>
+    Array.from({ length: runs }, () => answerShape(true, { register }).words[1]);
+
+  const clipped = REGISTERS.find((r) => r.key === 'clipped');
+  const talkative = REGISTERS.find((r) => r.key === 'talkative');
+
+  it('gives some matches a seat that answers in a handful of words', () => {
+    const sample = band(clipped);
+    const short = sample.filter((words) => words <= 7).length / sample.length;
+
+    expect(short).toBeGreaterThan(0.75);
+    // Never mute, though: a seat that cannot write a sentence is its own tell.
+    expect(sample.some((words) => words >= 8)).toBe(true);
+  });
+
+  it('gives others one that says the whole thought', () => {
+    const sample = band(talkative);
+    const long = sample.filter((words) => words >= 14).length / sample.length;
+
+    expect(long).toBeGreaterThan(0.15);
+    expect(sample.filter((words) => words <= 3).length / sample.length).toBeLessThan(0.15);
+  });
+
+  /* Whatever it is, it is that for the whole match - a register that changed
+   * every turn would be nobody at all. */
+  it('holds still inside a match and moves between them', () => {
+    expect(registerFor('rm_abc').key).toBe(registerFor('rm_abc').key);
+
+    const rooms = Array.from({ length: 300 }, (_, i) => registerFor(`rm_${i.toString(36)}`).key);
+    expect(new Set(rooms).size).toBe(REGISTERS.length);
+
+    const clippedRooms = rooms.filter((key) => key === 'clipped').length / rooms.length;
+    expect(clippedRooms).toBeGreaterThan(0.15);
+    expect(clippedRooms).toBeLessThan(0.45);
+  });
+
+  /* The rules that need room still get the last word on a given turn. */
+  it('still gives a bit and a defence the room they need', () => {
+    const inCharacter = band(clipped, 4000);
+    expect(
+      Array.from({ length: 4000 }, () =>
+        answerShape(true, { register: clipped, inCharacter: true, needsRoom: true }).words[0]
+      ).every((min) => min >= 4)
+    ).toBe(true);
+    expect(inCharacter.some((words) => words <= 3)).toBe(true);
+  });
+});
+
+
+/**
+ * A room that never went near the question in the first place.
+ *
+ * Two of these, and the reply arrow cannot see either. A second round opens
+ * on a new prompt and the room carries straight on with the vote — "why did
+ * yall vote me", a name still going round — and nobody is replying to
+ * anybody, they are all just still in the last round. Or a first round opens
+ * and the first person ignores the prompt and asks the room something of
+ * their own. Both times the impostor walked in with a tidy answer to a
+ * question everybody else had forgotten about.
+ */
+describe('a room that is somewhere else entirely', () => {
+  const ON_THE_VOTE = [
+    { name: 'Nedim', text: 'why did yall vote me last round', replyToName: null },
+    { name: 'Emil', text: 'i still think it was blue tbh', replyToName: null },
+  ];
+
+  const OWN_QUESTION = [{ name: 'Nedim', text: 'anyone else here from the uk?', replyToName: null }];
+
+  it('knows the room is still on the vote', () => {
+    expect(readRoom(ON_THE_VOTE, 'AI').elsewhere).toBe(true);
+    expect(readRoom([{ name: 'Nedim', text: 'blue is deffo the bot' }], 'AI').elsewhere).toBe(true);
+  });
+
+  it('knows somebody has asked the room their own thing', () => {
+    expect(readRoom(OWN_QUESTION, 'AI').elsewhere).toBe(true);
+    expect(readRoom([{ name: 'Nedim', text: 'wait what even happened' }], 'AI').elsewhere).toBe(
+      true
+    );
+  });
+
+  /*
+   * "pizza, you?" is an answer with a question stapled to the back of it, and
+   * reading that as somebody changing the subject took it off answering on
+   * the one turn it was supposed to be answering on.
+   */
+  it('does not take an answer that asks back for a change of subject', () => {
+    expect(asksTheRoom({ text: 'pizza, you?' })).toBe(false);
+    expect(asksTheRoom({ text: 'doner kebab, what about everyone else' })).toBe(false);
+    expect(asksTheRoom({ text: 'anyone else from the uk?' })).toBe(true);
+
+    // Aimed at one person is a conversation, which has a brief of its own.
+    expect(asksTheRoom({ text: 'what did you mean by that?', replyToName: 'AI' })).toBe(false);
+
+    const answers = [
+      { name: 'Nedim', text: 'pizza' },
+      { name: 'Emil', text: 'kebab, you?' },
+      { name: 'Kofi', text: 'sushi' },
+    ];
+    expect(readRoom(answers, 'AI').elsewhere).toBe(false);
+  });
+
+  /*
+   * Not even occasionally. A room arguing about the answers is still on the
+   * question, so putting yours up over the top of it is clumsy rather than
+   * impossible — but a conversation that is not the question at all started
+   * while this seat sat there, and there is no version of answering the
+   * prompt into it that reads as a person.
+   */
+  it('never answers the prompt into a conversation that has started without it', () => {
+    const draws = Array.from(
+      { length: 20000 },
+      () => answerShape(true, { elsewhere: true }).answering
+    );
+    expect(draws.some(Boolean)).toBe(false);
+
+    // A room still on the question is the other case, and that one it can.
+    const talking = Array.from(
+      { length: 20000 },
+      () => answerShape(true, { talking: true }).answering
+    );
+    expect(talking.filter(Boolean).length / talking.length).toBeGreaterThan(0.1);
+  });
+
+  it('is told what the room is actually on', () => {
+    const vote = lastMessage(
+      { roundLines: ON_THE_VOTE, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: false, stance: 'own', stanceNote: 'x' }
+    );
+    expect(vote).toContain('Nobody is answering the question');
+    expect(vote).toContain('still on the vote');
+    expect(vote).not.toContain('it is your turn to put up yours');
+
+    const asked = lastMessage(
+      { roundLines: OWN_QUESTION, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: false, stance: 'own', stanceNote: 'x' }
+    );
+    expect(asked).toContain('asked the room something of their own');
+    expect(asked).toContain('Answer what they asked');
   });
 });

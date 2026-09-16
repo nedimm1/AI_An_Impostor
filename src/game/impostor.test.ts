@@ -214,6 +214,90 @@ describe('what the impostor is told', () => {
     // The prompt is the room's own wording for a tied vote, not the question.
     expect(turn.prompt).toBe(state.prompt);
   });
+  /*
+   * The vote is public, so the impostor is the only player who could not see
+   * its own. Asked "why did you vote for me" a round later it had nothing to
+   * answer from, and a model with nothing to answer from picks a name that
+   * sounds right — in front of a room still looking at the real one.
+   */
+  it('carries every ballot by name, its own vote drawn out of each', () => {
+    let state = seated();
+    const impostorId = state.impostorId!;
+    state = answerEveryTurn(state);
+
+    expect(impostorTurn(state).ballots).toEqual([]);
+
+    state = play(
+      state,
+      { type: 'castVote', voterId: impostorId, targetId: 'p_kofi' },
+      { type: 'castVote', voterId: YOUR_ID, targetId: 'p_kofi' },
+      { type: 'castVote', voterId: 'p_deniz', targetId: 'p_kofi' },
+      { type: 'castVote', voterId: 'p_kofi', targetId: YOUR_ID },
+      { type: 'castVote', voterId: 'p_ines', targetId: YOUR_ID }
+    );
+    state = play(state, { type: 'nextRound' });
+
+    const nameOf = (id: string) => state.players.find((p) => p.id === id)!.name;
+    const [ballot, ...rest] = impostorTurn(state).ballots;
+
+    expect(rest).toEqual([]);
+    expect(ballot.round).toBe(1);
+    expect(ballot.yours).toBe(nameOf('p_kofi'));
+    expect(ballot.eliminated).toBe(nameOf('p_kofi'));
+    expect(ballot.votes).toContainEqual({
+      voter: nameOf(impostorId),
+      target: nameOf('p_kofi'),
+    });
+    // Everybody else's too: the result screen showed the room all of it.
+    expect(ballot.votes).toContainEqual({ voter: nameOf('p_kofi'), target: nameOf(YOUR_ID) });
+    expect(ballot.votes).toHaveLength(5);
+  });
+
+  /* Two rounds in, both are still there to be asked about. */
+  it('keeps the earlier rounds as well as the last one', () => {
+    let state = seated();
+    const impostorId = state.impostorId!;
+
+    const voteAll = (from: Room, targetId: string) =>
+      survivors(from).reduce(
+        (acc, voter) => play(acc, { type: 'castVote', voterId: voter.id, targetId }),
+        from
+      );
+
+    state = voteAll(answerEveryTurn(state), 'p_deniz');
+    state = play(state, { type: 'nextRound' });
+    state = voteAll(answerEveryTurn(state), 'p_kofi');
+    state = play(state, { type: 'nextRound' });
+
+    const nameOf = (id: string) => state.players.find((p) => p.id === id)!.name;
+    const ballots = impostorTurn(state).ballots;
+
+    expect(ballots.map((b) => b.round)).toEqual([1, 2]);
+    expect(ballots.map((b) => b.yours)).toEqual([nameOf('p_deniz'), nameOf('p_kofi')]);
+    expect(impostorId).not.toBe('p_deniz');
+  });
+
+  it('still has the ballots once a tie sends the room into a tiebreaker', () => {
+    let state = seated();
+    const impostorId = state.impostorId!;
+    state = answerEveryTurn(state);
+    state = play(
+      state,
+      { type: 'castVote', voterId: YOUR_ID, targetId: impostorId },
+      { type: 'castVote', voterId: 'p_deniz', targetId: impostorId },
+      { type: 'castVote', voterId: 'p_kofi', targetId: YOUR_ID },
+      { type: 'castVote', voterId: 'p_ines', targetId: YOUR_ID },
+      { type: 'castVote', voterId: impostorId, targetId: 'p_kofi' }
+    );
+    state = play(state, { type: 'nextRound' });
+
+    const turn = impostorTurn(state);
+    const tally = turn.ballots[turn.ballots.length - 1];
+    expect(turn.tiebreaker).toBe(true);
+    expect(tally.yours).toBe(state.players.find((p) => p.id === 'p_kofi')!.name);
+    // Nobody went: the room is about to decide that.
+    expect(tally.eliminated).toBeNull();
+  });
 });
 
 describe('what the impostor is told when it votes', () => {
@@ -261,5 +345,25 @@ describe('what the impostor is told when it votes', () => {
     expect(tied.accused).toContain(
       state.players.find((p) => p.id === impostorId)?.name
     );
+  });
+
+
+  it('tells the ballot how it voted last time', () => {
+    let state = seated();
+    const impostorId = state.impostorId!;
+    state = answerEveryTurn(state);
+    state = play(
+      state,
+      { type: 'castVote', voterId: impostorId, targetId: 'p_kofi' },
+      { type: 'castVote', voterId: YOUR_ID, targetId: 'p_deniz' },
+      { type: 'castVote', voterId: 'p_deniz', targetId: 'p_kofi' },
+      { type: 'castVote', voterId: 'p_kofi', targetId: 'p_deniz' },
+      { type: 'castVote', voterId: 'p_ines', targetId: 'p_kofi' }
+    );
+    state = play(state, { type: 'nextRound' });
+
+    expect(impostorBallot(state).ballots.map((b) => b.yours)).toEqual([
+      state.players.find((p) => p.id === 'p_kofi')!.name,
+    ]);
   });
 });

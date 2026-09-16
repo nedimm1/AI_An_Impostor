@@ -22,6 +22,7 @@ import {
   survivors,
   tiebreakerPrompt,
   voteResult,
+  type Ballot,
   type Outcome,
   type Player,
   type Room,
@@ -161,6 +162,7 @@ function matchedRoom(
     voted: [],
     ballotClosed: false,
     eliminatedId: null,
+    ballots: [],
     tiebreaker: null,
     pendingTiebreaker: null,
     outcome: null,
@@ -255,6 +257,17 @@ function resolveBallot(room: Room): Room {
   const result = voteResult(room);
 
   /*
+   * Added the moment the result exists, because this is the moment the room is
+   * shown it. `votes` goes on holding the same thing until the round turns
+   * over; this is the copy that survives that, and the run of them is what
+   * "you voted for him last time as well" is asked against.
+   */
+  const withBallot = (tied: string[] | null, eliminatedId: string | null): Ballot[] => [
+    ...room.ballots,
+    { round: room.round, votes: room.votes, eliminatedId, tied },
+  ];
+
+  /*
    * A first tie stops at the result rather than going straight into the
    * tiebreaker. It used to do the latter, and the room was simply handed a new
    * prompt with no account of what had happened to the vote it had just cast —
@@ -267,6 +280,7 @@ function resolveBallot(room: Room): Room {
       ...room,
       phase: 'verdict',
       eliminatedId: null,
+      ballots: withBallot(result.playerIds, null),
       pendingTiebreaker: result.playerIds,
       ballotClosed: true,
       turnEndsAt: null,
@@ -279,6 +293,7 @@ function resolveBallot(room: Room): Room {
 
   const resolved: Room = {
     ...room,
+    ballots: withBallot(room.tiebreaker, eliminatedId),
     players: eliminatedId
       ? room.players.map((p) => (p.id === eliminatedId ? { ...p, eliminated: true } : p))
       : room.players,

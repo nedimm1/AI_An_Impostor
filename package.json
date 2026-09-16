@@ -55,6 +55,7 @@
     "test:watch": "jest --watch",
     "cost": "node scripts/model-cost.js",
     "impostor:sample": "node scripts/impostor-sample.js",
+    "impostor:votes": "tsx scripts/impostor-vote.ts",
     "impostor:server": "tsx server/index.js"
   },
   "private": true,

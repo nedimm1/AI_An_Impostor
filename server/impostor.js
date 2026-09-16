@@ -122,6 +122,41 @@ const LENGTHS = [
   { weight: 4, min: 21, max: 30, label: 'twenty to thirty words' },
 ];
 
+/**
+ * How long this seat's messages run, for the whole match.
+ *
+ * The length of any one message was already a draw, but it was drawn from the
+ * same table every time, so every match came out at the same average: a seat
+ * that mostly sends eight to thirteen words, every round, in every room. Real
+ * people are not distributed like that. One of them answers everything in two
+ * words all evening and another writes a paragraph about a kebab, and the
+ * thing that gives a seat away is not the length of a message, it is the
+ * length of all of them together.
+ *
+ * So the table itself is drawn once per match, off the room id, the same way
+ * the persona and the bit are. `bias` multiplies the weight of each band in
+ * `LENGTHS`, in order.
+ */
+const REGISTERS = [
+  {
+    weight: 30,
+    key: 'clipped',
+    /* Two to five words, nearly always. Answers, not messages. */
+    bias: [2.2, 1.4, 0.5, 0.15, 0.05],
+  },
+  {
+    weight: 45,
+    key: 'ordinary',
+    bias: [1, 1, 1, 1, 1],
+  },
+  {
+    weight: 25,
+    key: 'talkative',
+    /* Says the whole thought, and occasionally more of it than anybody wanted. */
+    bias: [0.4, 0.8, 1.4, 1.6, 1.5],
+  },
+];
+
 /*
  * Deliberately lower than the old implementation.
  *
@@ -178,6 +213,26 @@ function clauseChanceFor(length) {
  */
 const IGNORE_SOCIAL_CUE_CHANCE = 0.15;
 
+/*
+ * How often it puts its own answer up anyway, into a room that has got
+ * talking.
+ *
+ * Mostly it should join what is being said rather than post an answer over
+ * the top of it. Not always, though: people do drop their own answer into a
+ * room mid-argument, either because they only just read the question or
+ * because the argument is not theirs, and a seat that never once does it is
+ * a seat that always does the correct thing.
+ */
+const ANSWER_OVER_TALK_CHANCE = 0.2;
+
+/**
+ * How few lines from other people make a room too thin to agree with.
+ *
+ * Two, because that is the smallest room that can be having a conversation
+ * at all: one answer and one line aimed at it.
+ */
+const SHALLOW_ROOM = 2;
+
 
 /*
  * What a message is FOR, decided before it is written.
@@ -217,6 +272,20 @@ const STANCES_ANSWERING = [
     weight: 12,
     key: 'tangent',
     note: 'Answer, but sideways - the thing the question reminded you of, or the answer nobody is expecting. Still an answer.',
+  },
+  /*
+   * Not having one.
+   *
+   * Everybody else in the room gets asked forty-three questions over a match
+   * and does not have a view about all of them; the seat that produces a
+   * considered answer to every single one is the seat that is being asked to.
+   * "idk" is a whole message and a very common one, and it is the one thing
+   * a model will never do unless it is told it is allowed to.
+   */
+  {
+    weight: 8,
+    key: 'pass',
+    note: 'You have not got an answer to this one and you are not going to invent one. "idk", "no idea honestly", "cant think of one" - that is the whole message. Do not apologise for it, do not explain why, and do not give an answer anyway after it.',
   },
 ];
 
@@ -331,7 +400,7 @@ const STANCES_TALKING = [
   {
     weight: 22,
     key: 'agree',
-    note: 'You agree. Say so straight out - "yeah exactly", "same", "this is the correct answer" - and say why in a few words. No hedging and no qualifying it to death.',
+    note: 'You agree. Say so straight out - "yeah exactly", "same", "agree", "fax", "this is the correct answer" - and say why if the message has room for it. One word on its own is a real message and half a chat is made of them. No hedging and no qualifying it to death.',
   },
   {
     weight: 21,
@@ -408,10 +477,31 @@ function stanceTable({
   unanswered = false,
   suspicion = false,
   piling = false,
+  shallow = false,
 } = {}) {
   if (answering) return STANCES_ANSWERING;
 
   let pool = [...STANCES_TALKING];
+
+  /*
+   * Two lines in, there is not enough on the screen to be agreeing with.
+   *
+   * An exchange now starts on one aimed line - somebody says Egypt, somebody
+   * writes "overrated imo" under it - which is right, but it means the turn
+   * can come round while the room is three lines old, and a fifth of those
+   * draws came out as "same" or "yeah same" and nothing else. Agreement is a
+   * real move and most of a chat is made of it, but it is a move that needs
+   * something to land on: as the whole of the first thing you say into a
+   * conversation that has barely started, it is a seat taking up a turn to
+   * say nothing, and it is the message a room forgets it ever read.
+   */
+  if (shallow) {
+    pool = pool.map((option) =>
+      option.key === 'agree'
+        ? { ...option, weight: Math.round(option.weight * 0.3) }
+        : option
+    );
+  }
 
   /*
    * A name is in the frame. Adding something of your own to the topic is
@@ -511,6 +601,32 @@ function weighted(options) {
   }
 
   return options[options.length - 1];
+}
+
+
+/**
+ * The same draw as `weighted`, decided by a seed rather than by a roll.
+ *
+ * For the things that have to hold still for a whole match: a register that
+ * changed every turn would be nobody at all.
+ */
+function weightedBy(hash, options) {
+  const total = options.reduce((sum, option) => sum + option.weight, 0);
+
+  let n = hash % total;
+
+  for (const option of options) {
+    n -= option.weight;
+    if (n < 0) return option;
+  }
+
+  return options[options.length - 1];
+}
+
+
+/** This match's register, off the room id. Same room, same seat, all match. */
+function registerFor(seed) {
+  return weightedBy(hashOf(`register:${seed}`), REGISTERS);
 }
 
 
@@ -622,14 +738,29 @@ function answerShape(
     challenged = false,
     argument = false,
     talking = false,
+    elsewhere = false,
     suspicion = false,
     piling = false,
+    shallow = false,
     terse = false,
     inCharacter = false,
     needsRoom = false,
+    register = null,
   } = {}
 ) {
   let bands = [...LENGTHS];
+
+  /*
+   * This match's register, applied before everything else so that the rules
+   * below - a bit needs room, a defence needs room, not two one-word turns
+   * running - still get the last word on any particular turn.
+   */
+  if (register) {
+    bands = bands.map((band, i) => ({
+      ...band,
+      weight: Math.max(0, Math.round(band.weight * (register.bias[i] ?? 1))),
+    }));
+  }
 
 
   /*
@@ -732,7 +863,25 @@ function answerShape(
   const owesAnswer =
     !laterTurn && !tiebreaker && !underPressure;
 
-  const answering = owesAnswer && !talking;
+  /*
+   * A room still on the question and a room that has left it are not the
+   * same thing, and only one of them leaves room to answer anyway.
+   *
+   * `talking` is people arguing about the answers - the question is still
+   * what the room is about, so putting yours up over the top of it is a
+   * clumsy move rather than an impossible one, and people do it.
+   *
+   * `elsewhere` is a conversation that is not the question at all: the vote,
+   * a name, something one of them asked. Whatever that is, it started while
+   * this seat was sitting there, and there is no version of answering the
+   * prompt into it that reads as a person. So that one takes the turn.
+   */
+  const busy = talking || elsewhere;
+
+  const answering =
+    owesAnswer &&
+    !elsewhere &&
+    (!talking || Math.random() < ANSWER_OVER_TALK_CHANCE);
 
   const stance =
     underPressure || tiebreaker
@@ -743,9 +892,10 @@ function answerShape(
             challenged,
             argument,
             replying,
-            unanswered: owesAnswer && talking,
+            unanswered: owesAnswer && busy,
             suspicion,
             piling,
+            shallow,
           })
         );
 
@@ -813,6 +963,7 @@ function answerShape(
     stanceNote: stance?.note ?? null,
     pushback,
     answering,
+    register: register?.key ?? 'ordinary',
   };
 }
 
@@ -1370,12 +1521,16 @@ function accusationsAgainst(lines, name) {
     ),
   ];
 
-  return aimed.filter(
-    (line) =>
-      isAccusation(
-        String(line.text).replace(withoutName, ' ')
-      )
-  );
+  return aimed.filter((line) => {
+    const said = String(line.text).replace(withoutName, ' ');
+
+    // Asking about the ballot is its own thing and has its own brief below.
+    // `isVoteQuestion` has already checked that nothing else in the line is
+    // an accusation, so this cannot swallow one.
+    if (isVoteQuestion(said)) return false;
+
+    return isAccusation(said);
+  });
 }
 
 
@@ -1445,6 +1600,78 @@ function isQuestion(text) {
 }
 
 
+/*
+ * Somebody asking about the ballot, which is not somebody calling you the AI.
+ *
+ * `vote` sits in the accusation markers and belongs there - "im voting you"
+ * is a charge. But the result screen draws every vote with the voter's face
+ * under the name they picked, so the room reads the ballot afterwards and
+ * asks about it, and "why did you vote for me" was arriving here as an
+ * accusation and being answered with a defence of its own humanity. Nobody
+ * asked whether it was a person. They asked about a line on the screen, and
+ * that has a plain answer.
+ */
+const VOTE_MARKERS = /\b(vote|voted|votes|voting|ballot)\b/i;
+
+/** The same words, for taking out of a sentence before reading the rest. */
+const VOTE_WORDS = /\b(vote|voted|votes|voting|ballot)\b/gi;
+
+
+function mentionsVoting(text) {
+  return VOTE_MARKERS.test(String(text ?? ''));
+}
+
+
+/**
+ * A line about your vote that wants an answer rather than a defence.
+ *
+ * Deliberately wider than a question mark: "you voted me lol" is asking the
+ * same thing and gets the same answer. What it is not is a line that still
+ * accuses once the vote words are taken out of it - "you voted lars and
+ * youre the ai" is an accusation that happens to mention the ballot, and
+ * sending that to the wrong brief is how a defence goes missing.
+ */
+function isVoteQuestion(text) {
+  const said = String(text ?? '');
+
+  if (!mentionsVoting(said)) return false;
+
+  /*
+   * A ballot that has closed, not one that is still open. "im voting you" is
+   * a threat made in the room and belongs with the accusations; "you voted
+   * me" and "why are you voting for me" are both about a vote that has
+   * already been seen, which is the thing that has an answer.
+   */
+  if (!/\bvoted\b/i.test(said) && !isQuestion(said)) return false;
+
+  return !isAccusation(said.replace(VOTE_WORDS, ' '));
+}
+
+
+/**
+ * The lines aimed at this player that are about its vote.
+ *
+ * Aimed by name or by the reply arrow, the same two ways an accusation
+ * arrives, because "why did you vote for me" is nearly always drawn under
+ * the message it answers rather than typed with a name in it.
+ */
+function voteQuestionsTo(lines, name) {
+  const withoutName = new RegExp(namePattern(name).source, 'gi');
+
+  return [
+    ...linesNaming(lines, name),
+    ...(lines ?? []).filter(
+      (line) =>
+        line.name !== name &&
+        (line.replyToName ?? null) === name &&
+        !namePattern(name).test(line.text)
+    ),
+  ].filter((line) =>
+    isVoteQuestion(String(line.text).replace(withoutName, ' '))
+  );
+}
+
+
 function isDisagreement(text) {
   const said = String(text ?? '');
 
@@ -1484,6 +1711,36 @@ function isAgreement(text) {
  * agreement. Anything that carries an actual objection is pushback even if it
  * opens with "yeah".
  */
+/*
+ * The words a question to the room opens with.
+ *
+ * A question mark is not enough on its own: "pizza, you?" is an answer with
+ * a question stapled to the back of it, and treating that as somebody
+ * changing the subject took the impostor off answering on the one turn it
+ * was supposed to be answering on. What marks a real one is that the line
+ * opens as a question rather than ending as one.
+ */
+const OPENS_A_QUESTION =
+  /^\s*(anyone|anybody|does|do|did|is|are|was|were|has|have|can|could|would|should|what|whats|what's|why|who|whos|who's|how|which|where|when|guys|lads)\b/i;
+
+
+/**
+ * Somebody putting a question to the room rather than answering the one at
+ * the top of it. "wait" counts however it carries on - nobody opens a line
+ * with it and then answers the question.
+ */
+function asksTheRoom(line) {
+  const said = String(line?.text ?? '');
+
+  // Aimed at one person is a conversation, which has its own brief.
+  if (line?.replyToName) return false;
+
+  if (/^\s*wait\b/i.test(said)) return true;
+
+  return said.includes('?') && OPENS_A_QUESTION.test(said);
+}
+
+
 function isChallenge(text) {
   const said = String(text ?? '');
 
@@ -1648,6 +1905,51 @@ function readRoom(lines, ownName) {
    * one hard signal - an arrow or a name - so that a round of answers with a
    * "nah" and a "lol" in it does not get mistaken for one.
    */
+  /*
+   * The line that starts one.
+   *
+   * Two lines is enough: somebody says Egypt, somebody else writes
+   * "overrated imo" under it, and that is a conversation - the room has
+   * something to talk about that is not the question any more. Counting two
+   * conversational lines missed exactly that, because the first line in an
+   * exchange is an ordinary answer and only the second one is aimed, so the
+   * impostor walked into the middle of it with "id go to japan" and was the
+   * only seat in the room not reading it.
+   *
+   * What separates it from "lol pineapple" is that something is being put:
+   * a view, or a question about somebody's. Bare agreement is not an
+   * exchange however it is aimed - people say "same" all day and nothing
+   * follows it.
+   */
+  const startsAnExchange = (line) => {
+    if (!line.replyToName || line.replyToName === ownName) return false;
+    if (isDisagreement(line.text)) return true;
+    if (isQuestion(line.text)) return true;
+    if (isAgreement(line.text)) return false;
+    return wordCount(line.text) >= 4;
+  };
+
+  /*
+   * A line that is plainly not an answer to the question.
+   *
+   * Two things kept happening that the reply arrow cannot see. A second
+   * round opens on a new prompt and the room carries straight on with the
+   * vote - "why did yall vote me", "i still think it was blue" - and nobody
+   * is replying to anybody, they are all just still in the last round. And a
+   * first round opens with somebody ignoring the question entirely and
+   * asking the room something of their own.
+   *
+   * In both, the question at the top is a thing that happened rather than a
+   * thing anybody is doing, and the seat that posts a tidy answer to it is
+   * the one seat not in the room. None of the prompts are about voting and
+   * none of them are asked by a player, so both are safe to read off the
+   * words.
+   */
+  const offQuestion = (line) =>
+    isAccusation(line.text) ||
+    mentionsVoting(line.text) ||
+    asksTheRoom(line);
+
   const latest = others.slice(-4);
 
   const conversation = latest.filter(aboutSomebody);
@@ -1712,9 +2014,18 @@ function readRoom(lines, ownName) {
     /* The room has stopped answering the question and started answering
      * each other. */
     talking:
-      conversation.length >= 2 &&
-      conversation.length >= latest.length - conversation.length &&
-      conversation.some(aimedAtSomebody),
+      (conversation.length >= 2 &&
+        conversation.length >= latest.length - conversation.length &&
+        conversation.some(aimedAtSomebody)) ||
+      latest.some(startsAnExchange),
+
+    /*
+     * The room is somewhere else: on the vote, on a name, or on something one
+     * of them asked. Kept apart from `talking` because that is about people
+     * answering each other and this is about what they are answering about,
+     * and the brief for it has to name the thing.
+     */
+    elsewhere: latest.some(offQuestion),
 
     spokenYet: all.some(
       (line) => line.name === ownName
@@ -2608,6 +2919,12 @@ function readSituation(turn, persona) {
       (line) => isChallenge(line.text)
     ),
 
+    /* Written at it about how it voted. */
+    voteQuestions: voteQuestionsTo(
+      turn.roundLines,
+      persona.name
+    ),
+
     /* Two or more people going at each other, whoever they are. */
     argument: read.arguing,
   };
@@ -2770,6 +3087,9 @@ function buildMessages(turn) {
     answerShape(
       (turn.roundLines ?? []).length > 0,
       {
+        register:
+          turn.register ??
+          registerFor(turn.roomId ?? 'default'),
         laterTurn:
           (turn.turnNumber ?? 1) > 1,
         underPressure:
@@ -2781,8 +3101,10 @@ function buildMessages(turn) {
         challenged: facts.challenged.length > 0,
         argument: facts.argument,
         talking: facts.read.talking,
+        elsewhere: facts.read.elsewhere,
         suspicion: facts.read.suspects.length > 0,
         piling: facts.read.piling,
+        shallow: facts.read.lines <= SHALLOW_ROOM,
         terse: wasTerse(facts.read.ownLines),
       }
     );
@@ -2801,7 +3123,182 @@ function buildMessages(turn) {
     challenged,
     counter,
     nameUse,
+    voteQuestions = [],
   } = turn.plan ?? turnPlan(turn, persona, shape, facts);
+
+
+  /* ============================================================
+   * THE BALLOT
+   * ============================================================ */
+
+  /*
+   * How it has voted, once that is the thing being talked about.
+   *
+   * Sent only when it is asked or when the vote is the subject - on a
+   * tiebreaker the room is there because of the ballot - because on an
+   * ordinary turn a list of who voted for whom is one more thing for a model
+   * to have an opinion about, and it will.
+   *
+   * It is sent at all because the impostor could not see its own vote. The
+   * room can: the result screen puts each voter's face under the name they
+   * picked and leaves it there. Asked why it voted for somebody, a model with
+   * no record of it will pick a name that sounds right, and the one thing in
+   * this game that cannot be bluffed is a line everybody is still looking at.
+   *
+   * All of them go in rather than the last one, because "you voted for him
+   * last time as well" is a question about the run and not about the round,
+   * and a match is four rounds long: this is twenty lines at the very most.
+   */
+  let ballot = '';
+
+  const ballots = turn.ballots ?? [];
+  const latest = ballots.length ? ballots[ballots.length - 1] : null;
+  const votedFor = latest?.yours ?? null;
+
+  const ballotLine = (record) =>
+    [
+      `Round ${record.round}${
+        record.eliminated ? ` - ${record.eliminated} went` : ' - nobody went'
+      }:`,
+      ...(record.votes ?? []).map(
+        (v) => `  ${v.voter} voted for ${v.target}`
+      ),
+    ].join('\n');
+
+  if (latest && (voteQuestions.length || turn.tiebreaker)) {
+    const votedAtYou = (latest.votes ?? [])
+      .filter((v) => v.target === persona.name)
+      .map((v) => v.voter);
+
+    /*
+     * Voting for the same player twice is a position and reads as one. It is
+     * also the thing it is most likely to be asked about, so it is said out
+     * loud rather than left to be worked out of the list below.
+     */
+    const yourVotes = ballots
+      .map((record) => record.yours)
+      .filter(Boolean);
+
+    const again =
+      votedFor &&
+      yourVotes.filter((name) => name === votedFor).length > 1;
+
+    ballot = `
+Every vote in this match is on everybody's screen. Each name has the faces of the people who picked it underneath, so who voted for whom is not something only you know, and it is not something anybody can take back.
+
+${votedFor ? `Last vote, you voted for ${votedFor}.` : 'Last vote, you did not name anybody.'}${
+      votedAtYou.length
+        ? ` ${listNames(votedAtYou)} voted for you.`
+        : ''
+    }${again ? ` That is not the first time you have voted for ${votedFor}.` : ''}
+
+How the voting has gone:
+${ballots.map(ballotLine).join('\n\n')}
+`;
+  }
+
+  /*
+   * Whether it is being pressed on the vote or merely asked about it.
+   *
+   * The difference decides whether it hands over its reasoning, and it only
+   * hands it over under pressure. Asked once, a person shrugs: "had to be
+   * someone". A player who answers the first "why did you vote for me" with a
+   * worked-out account of what you said and when is not being honest, they
+   * are being a prosecutor, and it is the single most machine-shaped thing
+   * this game will ask it to do - a case is what you build when you have had
+   * time to prepare one.
+   *
+   * It is also worse play. Spent on the first ask the reason lands on nobody;
+   * kept until the room has actually turned on it, it is an answer to a
+   * question everybody is now listening to.
+   */
+  /*
+   * The second push rarely says "vote" again. It is "no but why me though",
+   * written at the answer it just gave, so looking for the word a second time
+   * finds nothing - what marks it is the shape: it was asked, it answered,
+   * and somebody came straight back at it.
+   */
+  const spoken = turn.roundLines ?? [];
+  const askedAt = voteQuestions.length ? spoken.indexOf(voteQuestions[0]) : -1;
+  const answeredAt =
+    askedAt >= 0
+      ? spoken.findIndex(
+          (line, i) => i > askedAt && line.name === persona.name
+        )
+      : -1;
+
+  const pushedAgain =
+    answeredAt >= 0 &&
+    spoken.slice(answeredAt + 1).some(
+      (line) =>
+        line.name !== persona.name &&
+        ((line.replyToName ?? null) === persona.name ||
+          namePattern(persona.name).test(line.text))
+    );
+
+  const pressedOnVote =
+    voteQuestions.length > 1 ||
+    pushedAgain ||
+    accusations.length > 0 ||
+    onTrial;
+
+  if (latest && voteQuestions.length) {
+    const askedByYourTarget = voteQuestions.some(
+      (line) => line.name === votedFor
+    );
+
+    ballot += `
+${
+  voteQuestions.length === 1
+    ? 'Somebody has asked you about your vote.'
+    : 'You are being asked about your vote.'
+}
+
+${voteQuestions
+  .map((line) => `${line.name}: ${line.text}`)
+  .join('\n')}
+
+You do not have a reason and you are not going to produce one:
+
+"idk i didnt know who else to vote for"
+"had to be someone"
+"idk you just seemed the most sus"
+"no reason really, i just picked"
+
+That is the whole answer. Somebody who voted on a feeling has no case to make, and there is nothing in a shrug for the room to take apart - every reason you could give instead is a claim about a person who is sitting right there and can scroll back through the round to check it, and being caught inventing one is worse than never having had one.
+
+${
+      votedFor
+        ? `Own the vote. You voted for ${votedFor} and they can see that you did, so do not name anybody else, do not say you did not, and do not pretend you cannot remember.`
+        : 'You named nobody, and they can see that too.'
+    }
+
+Do not apologise, do not take it back, do not explain, do not list anything.${
+      askedByYourTarget
+        ? `
+
+It is ${votedFor} asking, and you voted for them. Say it to them rather than round them.`
+        : ''
+    }
+`;
+
+    if (pressedOnVote) {
+      /*
+       * The second ask is where a model caves and starts explaining, which
+       * is the whole thing this is here to stop: an answer that arrives only
+       * once somebody pushes reads as one that was being kept back.
+       *
+       * So the line does not change, only the register. Somebody who has
+       * already answered a question says the same thing again shorter and
+       * flatter, and sounds bored rather than cornered.
+       */
+      ballot += `
+They have asked again, and the answer is the same one.
+
+Say it shorter and flatter this time - "i said, i didnt know", "it was a guess, leave it" - bored rather than cornered. Do not start explaining because somebody pushed you. An answer that only turns up when you are leant on is an answer you were holding back, and the room can hear that.
+`;
+    }
+  }
 
 
   let pressure = '';
@@ -2898,7 +3395,14 @@ ${named
      * it is five people being asked the same question in turn, and this is
      * its go.
      */
-    conversationMode = `
+    conversationMode =
+      shape.stance === 'pass'
+        ? `
+The room is going round answering the question and it is your turn, and you have not got an answer to this one.
+
+That is all this message is. Nobody owes the room a view on everything it is asked, and "idk" is a whole message.
+`
+        : `
 The room is going round answering the question. Everybody puts up their own answer first, and it is your turn to put up yours.
 
 Answer it. Say what your answer actually is.
@@ -2908,6 +3412,46 @@ Do not spend your turn on somebody else's answer instead of giving one. Having a
 If somebody's answer makes you want to say something, you can say it in the same message. Your own answer still has to be in there.
 
 One thing, not a range. Everybody else is naming one - "doner kebab", "peking duck". A list of three, or "anything with rice", is not picking, and picking is what was asked.
+`;
+  } else if (chatting && read.elsewhere) {
+    /*
+     * The room is not on the question at all.
+     *
+     * Two ways it happens and one brief for both. A second round opens on a
+     * new prompt and the room carries straight on with the vote - "why did
+     * yall vote me", a name still going round - because a vote is a more
+     * interesting thing than a question about kebabs. Or a first round opens
+     * and the first person ignores the prompt and asks the room something of
+     * their own.
+     *
+     * Either way the question at the top has become a thing that happened
+     * rather than a thing anybody is doing, and the seat that walks in with
+     * a tidy answer to it is the one seat that has not read the screen. It
+     * was doing exactly that: a round opened with "why did everyone vote for
+     * me" and it answered with its favourite sandwich.
+     */
+    const onTheVote = recentLines(turn.roundLines)
+      .slice(-4)
+      .some(
+        (line) =>
+          line.name !== persona.name &&
+          (isAccusation(line.text) || mentionsVoting(line.text))
+      );
+
+    conversationMode = `
+Nobody is answering the question. ${
+      onTheVote
+        ? 'The room is still on the vote - who went, who voted for who, who they think it is.'
+        : 'Somebody has asked the room something of their own and that is what is being answered.'
+    } The question at the top opened the round and the room has walked straight past it.
+
+So go where the room actually is. ${
+      onTheVote
+        ? 'Say what you think about the vote, or about the name going round - you have a view on that like everybody else does, and you are voting again in a few minutes.'
+        : 'Answer what they asked. It is a question put to the room and you are in the room.'
+    }
+
+Your own answer to the question can wait, and if it never comes nobody will notice, because nobody is waiting for it. What would be noticed is a tidy answer to a question everybody else has forgotten about, posted as though you had not read the last few messages.
 `;
   } else if (chatting && !read.spokenYet) {
     /*
@@ -2924,6 +3468,8 @@ One thing, not a range. Everybody else is naming one - "doner kebab", "peking du
 The question was only there to get people talking, and the room has stopped going round it. People are answering each other now, not the question.
 
 So join that. Say the thing you would actually say to what is on the screen - agree with somebody, tell them they are wrong, add the bit they have missed.
+
+And notice what they have got onto. It is a thing now, not a question - a place, a film, a team, somebody's opinion about one - and you are allowed to know it. You have been there, you have seen it, your cousin has one. "i went last year, it wasnt that bad" is a better message than your own answer is, and it gets your answer in sideways without you ever having to announce it.
 
 You have not said what your own answer is yet, and it can come out in this. What it cannot be is a cold answer dropped over the top of a conversation, as though you had not read a word of it. That is the one message in this room that would look odd.
 `;
@@ -3076,6 +3622,7 @@ Do not send the same thing again. Not the same point in different words, and not
     social,
     conversationMode,
     repeats,
+    ballot,
     pressure,
     situation,
 
@@ -3118,8 +3665,9 @@ Everyone else is a real human player.
 
 You are choosing who to vote for.
 
-Nobody can see your individual vote.
-Only the final vote totals are shown.
+Everybody will see who you picked. When the vote closes the room is shown every name with the faces of the people who voted for it underneath, and that stays true for the rest of the match - they can bring it up a round later, and they will.
+
+So this is not a secret ballot and it is not only a vote. It is something you will be asked to explain in your own words, to the person you picked, while they are looking at the proof.
 
 Your objective is to survive.
 
@@ -3133,8 +3681,15 @@ Consider:
 4. Can your vote help create a majority?
 5. Would removing a quiet player actually accomplish anything?
 6. Is there an existing consensus you can safely join?
+7. Would that name need explaining? You will be asked about this vote and you are not going to explain it, so the one to pick is the one the room is already looking at.
 
 Prefer votes that have a realistic chance of contributing to someone being removed.
+
+A vote nobody else casts is a line you will be defending on your own.
+
+A vote for whoever has just accused you reads as getting your own back, and somebody in that room will say so.
+
+A vote for the player you spent the round agreeing with reads worse than either, because the room watched you agree with them.
 
 Do not vote for yourself.
 
@@ -3235,6 +3790,28 @@ ${
               : '',
 
             tieContext,
+
+            /*
+             * How it has voted so far, because this vote is read against
+             * those ones. Voting for the same player twice is a position;
+             * swinging from one name to another without anything having
+             * happened is a question somebody will ask.
+             */
+            (turn.ballots ?? []).some((record) => record.yours)
+              ? `\nHow you have voted so far, which everybody saw:\n${(
+                  turn.ballots ?? []
+                )
+                  .filter((record) => record.yours)
+                  .map(
+                    (record) =>
+                      `Round ${record.round}: you voted for ${record.yours}.${
+                        record.eliminated
+                          ? ` ${record.eliminated} went.`
+                          : ' Nobody went.'
+                      }`
+                  )
+                  .join('\n')}`
+              : '',
 
             `\nCandidates:\n${candidates.join(', ')}`,
 
@@ -3494,6 +4071,10 @@ async function writeAnswer(turn) {
     answerShape(
       (turn.roundLines ?? []).length > 0,
       {
+        register:
+          turn.register ??
+          registerFor(turn.roomId ?? 'default'),
+
         laterTurn:
           (turn.turnNumber ?? 1) > 1,
 
@@ -3513,9 +4094,13 @@ async function writeAnswer(turn) {
 
         talking: situation.read.talking,
 
+        elsewhere: situation.read.elsewhere,
+
         suspicion: situation.read.suspects.length > 0,
 
         piling: situation.read.piling,
+
+        shallow: situation.read.lines <= SHALLOW_ROOM,
 
         terse: wasTerse(situation.read.ownLines),
 
@@ -4135,8 +4720,12 @@ module.exports = {
   roomNote,
   pickCounterTarget,
   nameUsePolicy,
+  asksTheRoom,
   isDisagreement,
   isQuestion,
+  isVoteQuestion,
+  mentionsVoting,
+  voteQuestionsTo,
   isAgreement,
   isChallenge,
   stanceTable,
@@ -4147,12 +4736,15 @@ module.exports = {
   personaFor,
 
   systemPrompt,
+  votePrompt,
   buildMessages,
 
   buildMemory,
   summarizeState,
 
   PERSONAS,
+  REGISTERS,
+  registerFor,
   STANCES_ANSWERING,
   STANCES_TALKING,
   STANCE_DEFEND,

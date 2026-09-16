@@ -188,6 +188,24 @@ export type Room = {
   /** Who the round's vote removed, or null when the vote settled on nobody. */
   eliminatedId: string | null;
   /**
+   * Every ballot the room has seen the result of, oldest first.
+   *
+   * `votes` is wiped when the next round opens, and it has to be — it is the
+   * live ballot. But the result screen draws every vote with the voter's face
+   * under the name they picked, so who voted for whom is not a thing that
+   * happened and passed: it is a thing the whole room read, and can still ask
+   * about two rounds later. "why did you vote for me" is a question about
+   * this, and so is "you voted for him last time as well" — which is why the
+   * whole run is kept and not only the last one. Without it the impostor is
+   * the one player at the table who cannot remember how it voted.
+   *
+   * A tiebreaker adds a second entry for the same round: they were two
+   * ballots, and the room saw both.
+   *
+   * Empty until the first one resolves.
+   */
+  ballots: Ballot[];
+  /**
    * The players a tied vote put up against each other. The whole room talks it
    * out — them first, and more often than anyone else — then the rest votes
    * between them. Null outside a tiebreaker.
@@ -334,6 +352,18 @@ export function isYourTurn(room: Room) {
 export function youAreOut(room: Room) {
   return playerById(room, room.youId)?.eliminated ?? false;
 }
+
+/** A ballot the room has already been shown the result of. */
+export type Ballot = {
+  /** The round it was cast in. A tiebreaker's second ballot shares the round. */
+  round: number;
+  /** voterId -> targetId, exactly as the result screen drew it. */
+  votes: Record<string, string>;
+  /** Who it removed, or null when it settled on nobody. */
+  eliminatedId: string | null;
+  /** The two it put up against each other, when it tied. */
+  tied: string[] | null;
+};
 
 /** targetId -> number of votes cast against them. */
 export function voteTally(room: Room) {
