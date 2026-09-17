@@ -121,7 +121,7 @@ describe('what the impostor is told', () => {
     expect(impostorTurn(state).roundLines.map((l) => l.text)).toEqual(['spoken']);
   });
 
-  it('remembers its own earlier rounds and nobody else\'s', () => {
+  it('remembers earlier rounds — its own lines apart from everybody else\'s', () => {
     let state = seated();
     const impostorId = state.impostorId!;
 
@@ -136,9 +136,83 @@ describe('what the impostor is told', () => {
     const turn = impostorTurn(state);
     // Round two is fresh, so nothing is on screen yet.
     expect(turn.roundLines).toEqual([]);
-    // But it still knows what it said, and only what it said.
+    // But it still knows what it said, and `ownHistory` is only ever that.
     expect(turn.ownHistory.length).toBeGreaterThan(0);
     expect(turn.ownHistory.every((line) => line.includes(impostorId))).toBe(true);
+
+    /*
+     * And what the others said, which it used to lose at the round boundary.
+     * The screen clears; a person does not forget the room they were just in,
+     * and the impostor was the only seat starting every round from nothing.
+     */
+    expect(turn.earlier.length).toBeGreaterThan(0);
+    expect(turn.earlier.every((line) => !line.text.includes(impostorId))).toBe(true);
+    expect(turn.earlier.every((line) => line.round < state.round)).toBe(true);
+    expect(turn.earlier.every((line) => line.name.length > 0)).toBe(true);
+  });
+
+  // Nobody recalls a whole match line by line. A seat that can is a seat with
+  // a transcript.
+  it('does not remember an unbounded amount of it', () => {
+    let state = seated();
+    for (let round = 0; round < 4 && state.outcome === null; round++) {
+      state = answerEveryTurn(state);
+      state = survivors(state).reduce(
+        (acc, voter) => play(acc, { type: 'castVote', voterId: voter.id, targetId: YOUR_ID }),
+        state
+      );
+      state = play(state, { type: 'spectate' }, { type: 'nextRound' });
+    }
+    expect(impostorTurn(state).earlier.length).toBeLessThanOrEqual(12);
+  });
+
+  /*
+   * A turn that runs out draws a bubble under that seat's name. Everybody in
+   * the room sees it; the impostor was the one seat it was filtered away from.
+   */
+  it('knows who sat their turn out, which the room watched happen', () => {
+    let state = seated();
+    state = answerAs(state, 'pizza');
+    state = play(state, {
+      type: 'answerTurn',
+      text: '',
+      timedOut: true,
+      replyToId: null,
+    });
+
+    const turn = impostorTurn(state);
+    // Nothing was said, so it is not a line to reply to or agree with.
+    expect(turn.roundLines.map((line) => line.text)).toEqual(['pizza']);
+    expect(turn.silent).toHaveLength(1);
+    expect(turn.silent[0].name.length).toBeGreaterThan(0);
+    expect(turn.silent[0].lostConnection).toBe(false);
+  });
+
+  it('carries the same fact into the ballot', () => {
+    let state = seated();
+    state = play(state, {
+      type: 'answerTurn',
+      text: '',
+      timedOut: true,
+      replyToId: null,
+    });
+    state = answerEveryTurn(state);
+
+    expect(impostorBallot(state).silent).toHaveLength(1);
+  });
+
+  // A vote cast on one round's worth of evidence has nothing behind it.
+  it('votes with the same memory the turn gets', () => {
+    let state = seated();
+    state = answerEveryTurn(state);
+    state = survivors(state).reduce(
+      (acc, voter) => play(acc, { type: 'castVote', voterId: voter.id, targetId: YOUR_ID }),
+      state
+    );
+    state = play(state, { type: 'spectate' }, { type: 'nextRound' });
+    state = answerAs(state, 'this round');
+
+    expect(impostorBallot(state).earlier.length).toBeGreaterThan(0);
   });
 
   // The room draws a reply under the message it answers. Flattened to name

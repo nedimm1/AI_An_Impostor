@@ -375,3 +375,110 @@ describe('who talks back to whom', () => {
     expect(count('newest')).toBeGreaterThan(count('oldest') * 2);
   });
 });
+
+
+/*
+ * Everything else about picking a target reads the shape of the round — how
+ * recent, how hot, who you were last talking to. None of it could see what
+ * the message said, and a target picked on shape alone lands wherever the
+ * room happened to put its newest line.
+ */
+describe('what the message says, not just where it sits', () => {
+  const pick = (round: Answer[], self: string, name?: string) => {
+    const counts = new Map<string, number>();
+    let none = 0;
+    for (let i = 0; i < SAMPLES; i++) {
+      const id = pickReplyTarget(round, self, name);
+      if (!id) {
+        none++;
+        continue;
+      }
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return {
+      none: none / SAMPLES,
+      share: (id: string) => (counts.get(id) ?? 0) / SAMPLES,
+    };
+  };
+
+  /*
+   * The reply is drawn as a quote of the message it answers, so this put the
+   * seat's own words in a box above its own next message. In a three-seat
+   * room, where its line is often the newest thing on screen, it was picking
+   * itself on about seven of every ten replies it made.
+   */
+  it('never writes back at its own message', () => {
+    const round = [
+      answer('a', { playerId: 'p_blue', text: 'crisps' }),
+      answer('b', { playerId: 'p_you', text: 'nandos' }),
+    ];
+    expect(pick(round, 'p_you').share('b')).toBe(0);
+  });
+
+  // "same" gets a heart, not a reply.
+  it('does not write back at bare filler', () => {
+    const round = [
+      answer('a', { playerId: 'p_you', text: 'nandos' }),
+      answer('b', { playerId: 'p_blue', text: 'pizza, and that ending was genuinely awful' }),
+      answer('c', { playerId: 'p_olive', text: 'same' }),
+      answer('d', { playerId: 'p_pink', text: 'lol' }),
+    ];
+    const out = pick(round, 'p_you');
+    expect(out.share('b')).toBeGreaterThan(out.share('c') + out.share('d'));
+  });
+
+  // A question put to the room is the most answerable thing on a screen, and
+  // it was losing to whatever happened to be said after it.
+  it('reaches past newer filler for a question', () => {
+    const round = [
+      answer('a', { playerId: 'p_you', text: 'nandos' }),
+      answer('b', { playerId: 'p_blue', text: 'crisps' }),
+      answer('c', { playerId: 'p_olive', text: 'wait does anyone else think this is weird?' }),
+      answer('d', { playerId: 'p_pink', text: 'same' }),
+    ];
+    const out = pick(round, 'p_you');
+    expect(out.share('c')).toBeGreaterThan(out.share('d') * 3);
+  });
+
+  /*
+   * Typing somebody's name is the commonest way one seat addresses another
+   * here, and only the reply arrow used to count. The seat being talked about
+   * was the one seat treating it as an ordinary line of the round.
+   */
+  it('treats being named like being replied to', () => {
+    const round = [
+      answer('a', { playerId: 'p_you', text: 'nandos' }),
+      answer('b', { playerId: 'p_blue', text: 'crisps' }),
+      answer('c', { playerId: 'p_olive', text: 'red has said nothing all game' }),
+      answer('d', { playerId: 'p_pink', text: 'toast' }),
+    ];
+    const named = pick(round, 'p_you', 'Mr. Red');
+    expect(named.share('c')).toBeGreaterThan(0.6);
+    expect(named.none).toBeLessThan(0.3);
+
+    // And without a name to go on, nothing changes from before.
+    const blind = pick(round, 'p_you');
+    expect(blind.share('c')).toBeLessThan(0.3);
+  });
+
+  it('does not fire on a name inside a longer word', () => {
+    const round = [
+      answer('a', { playerId: 'p_you', text: 'nandos' }),
+      answer('b', { playerId: 'p_blue', text: 'the sauce was a bit reddish tbh' }),
+      answer('c', { playerId: 'p_olive', text: 'toast' }),
+    ];
+    expect(pick(round, 'p_you', 'Mr. Red').share('b')).toBeLessThan(0.4);
+  });
+
+  // Filler aimed at you is still filler. Nobody writes a paragraph under
+  // "lol red".
+  it('does not chase its own name into a one word message', () => {
+    const round = [
+      answer('a', { playerId: 'p_you', text: 'nandos' }),
+      answer('b', { playerId: 'p_blue', text: 'so whats everyone doing after this?' }),
+      answer('c', { playerId: 'p_olive', text: 'lol' }),
+    ];
+    const out = pick(round, 'p_you', 'Mr. Red');
+    expect(out.share('b')).toBeGreaterThan(out.share('c'));
+  });
+});

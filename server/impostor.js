@@ -162,8 +162,52 @@ const REGISTERS = [
  *
  * If nearly half the messages contain a typo/apostrophe trick,
  * the pattern itself becomes suspicious.
+ *
+ * This is the population rate, not a seat's rate. Which one a seat gets is
+ * `TYPISTS` below.
  */
 const IMPERFECTION_CHANCE = 0.3;
+
+/*
+ * How much of a mess this particular person makes of typing, for the match.
+ *
+ * The rate was one number for every seat in every room, which is the same
+ * mistake `REGISTERS` was written to fix one line down from here: a draw that
+ * is right about the population and wrong about everybody in it. A seat
+ * mistyping almost exactly three messages in ten, match after match, is a
+ * distribution rather than a person, and it is the kind of thing this room is
+ * counting.
+ *
+ * Real rooms are nothing like that. One round had four seats typing
+ * "sicence", "typ", "dosent" and "icebregg" while other people go a whole
+ * match without a slip - not because they are careful, but because they are
+ * on a keyboard, or they reread things, or they just do not. So the rate is
+ * drawn once off the room id and holds all match, and the weights are set so
+ * the room still averages `IMPERFECTION_CHANCE` across seats.
+ *
+ * Length and spelling are drawn separately on purpose. Someone who answers in
+ * three words is not thereby someone who misspells them, and pairing the two
+ * would build four kinds of person instead of nine.
+ */
+const TYPISTS = [
+  {
+    weight: 30,
+    key: 'clean',
+    /* Reads it back before sending, or just does not miss. */
+    rate: 0.05,
+  },
+  {
+    weight: 45,
+    key: 'ordinary',
+    rate: 0.3,
+  },
+  {
+    weight: 25,
+    key: 'messy',
+    /* Thumbs, moving, not looking. Sends it anyway. */
+    rate: 0.6,
+  },
+];
 
 /*
  * How much of that imperfection is a letter-level slip.
@@ -290,6 +334,28 @@ const STANCES_ANSWERING = [
 ];
 
 /*
+ * The same turn, into a screen that is not empty.
+ *
+ * Everybody is still answering, so an answer is still what this turn is - but
+ * it is the second or third one, and the ones above it were read before this
+ * one was typed. A person answering into a thread answers through what is
+ * already in it: they say theirs is the same, or they put theirs next to the
+ * one above. The plain version - the answer standing on its own as though the
+ * screen were empty - is the one that reads as a form being filled in, and it
+ * was sending that one every single time, because the note told it to.
+ *
+ * "me too" is a whole answer here, and it is the most ordinary message in a
+ * group chat. That was the half with no way to happen at all: agreeing is not
+ * on the table while its own answer is outstanding, so a room where somebody
+ * had already said the obvious thing got a seat solemnly saying it again.
+ */
+const STANCE_OWN_ALONGSIDE = {
+  weight: 88,
+  key: 'own',
+  note: 'Answer the question, through what is already on the screen. If somebody has said yours, that is your answer - say so and carry it on: "me too lol", and then what you think about it. If yours is different, put it next to theirs rather than announcing it into the room. Either way your own answer has to be in the message; what it cannot be is a line that would read exactly the same if nobody had spoken yet.',
+};
+
+/*
  * Once it has answered, the round stops being a queue and becomes a
  * conversation, and having a view is the whole of it.
  *
@@ -405,9 +471,35 @@ const STANCES_TALKING = [
   {
     weight: 21,
     key: 'disagree',
-    note: 'You disagree, and that is fine. Say it plainly - you think they are wrong about this, and here is what you think instead. Have a go at the opinion, never at the person: no insults, nothing personal, nothing that turns the room. Somebody being wrong about pizza is not a thing to get worked up about.',
+    note: 'You disagree, and that is fine. Say it plainly - you think they are wrong about this, and here is what you think instead. Your reason is yours: what you like, what you have done, how it went for you. Never a claim about them - what they have tried, owned or been through is not something you know, and "you just havent had a good one" is you making it up. Have a go at the opinion, never at the person: no insults, nothing personal, nothing that turns the room. Somebody being wrong about pizza is not a thing to get worked up about.',
   },
 ];
+
+/*
+ * Being the one who changes the subject.
+ *
+ * It can follow one now - somebody types "forget the question, what did yall
+ * think of the new spiderman movie" and the room goes with them - but it will
+ * never be the seat that sends it, and over a match that is its own shape:
+ * five players, four of whom wander off at some point, and one who answers
+ * whatever is on the screen every single turn. The most reliably on-topic
+ * person in the room is not the most human one in it.
+ *
+ * Small, and hedged in `stanceTable` rather than here, because the move is
+ * only ordinary in a room with nothing going on. Dropped into an argument it
+ * is somebody not listening, and dropped into a round where a name is up it
+ * is somebody with a reason to move the conversation - which is the single
+ * most suspicious thing a seat can do in this game.
+ *
+ * What it must not be is a topic chosen to be knowledgeable about. The system
+ * prompt already bans dropping a title nobody mentioned, and this is the one
+ * stance that could quietly walk around that, so it says so again.
+ */
+const STANCE_REDIRECT = {
+  weight: 5,
+  key: 'redirect',
+  note: 'Change the subject. Ask the room something of your own - an ordinary question you would actually type into a group chat, off the back of nothing. "wait has anyone else not slept", "random but whats everyone doing this weekend". Not a title, not a film, not a thing you could be knowledgeable about: something everybody in the room can answer. Do not answer the question at the top as well, and do not explain why you are changing the subject.',
+};
 
 
 /*
@@ -471,6 +563,7 @@ const PUSHBACK_TRIAL = [
  */
 function stanceTable({
   answering = false,
+  answered = false,
   challenged = false,
   argument = false,
   replying = false,
@@ -479,7 +572,20 @@ function stanceTable({
   piling = false,
   shallow = false,
 } = {}) {
-  if (answering) return STANCES_ANSWERING;
+  /*
+   * Answering into a room that has answers in it is still answering, and the
+   * only thing that changes is whether the answer is allowed to land on one
+   * of them. `answered` is the flat fact that there is something on the
+   * screen - on the turn this fires, the seat has not spoken yet, so
+   * everything up there belongs to somebody else.
+   */
+  if (answering) {
+    return answered
+      ? STANCES_ANSWERING.map((option) =>
+          option.key === 'own' ? STANCE_OWN_ALONGSIDE : option
+        )
+      : STANCES_ANSWERING;
+  }
 
   let pool = [...STANCES_TALKING];
 
@@ -545,6 +651,25 @@ function stanceTable({
             }
           : option
       );
+  }
+
+  /*
+   * Only into a room with nothing going on.
+   *
+   * Not mid-argument, not while somebody is being replied to, not while its
+   * own answer is still outstanding, and above all not while a name is in the
+   * frame: changing the subject with somebody under accusation is the move of
+   * a player who wants the subject changed.
+   */
+  if (
+    !argument &&
+    !challenged &&
+    !replying &&
+    !suspicion &&
+    !unanswered &&
+    !shallow
+  ) {
+    pool.push(STANCE_REDIRECT);
   }
 
   if (challenged) pool.push(STANCE_DEFEND);
@@ -627,6 +752,158 @@ function weightedBy(hash, options) {
 /** This match's register, off the room id. Same room, same seat, all match. */
 function registerFor(seed) {
   return weightedBy(hashOf(`register:${seed}`), REGISTERS);
+}
+
+
+/** And how badly it types, drawn the same way and just as fixed. */
+function typistFor(seed) {
+  return weightedBy(hashOf(`typist:${seed}`), TYPISTS);
+}
+
+
+/* ============================================================
+ * WHAT THIS SEAT DOES NOT FOLLOW
+ * ============================================================ */
+
+/*
+ * Nobody has seen everything, and the seat that has is the bot.
+ *
+ * The room lands on one thing constantly, and the prompt already covers the
+ * half where it knows the thing: how it landed, never a fact that can be
+ * looked up. What it had no way to do is the other answer, which is the one
+ * most of a real room gives. Five people get asked about the ending of attack
+ * on titan and two of them have not seen it. "idk didnt watch it" is a whole
+ * message and the most common one there is.
+ *
+ * It will not get there on its own. A model handed a title it knows always
+ * has something to say about it, so having nothing to say has to be drawn
+ * rather than hoped for - and drawn off the room id, because a seat that does
+ * not watch anime at the top of the match does not watch it at the bottom
+ * either. A coin flip per turn would have it dodging a show in one message
+ * and reviewing it in the next, which is a worse tell than either answer.
+ *
+ * Two layers, because the two sentences are different. A genre it does not
+ * follow at all, standing for the whole match, which is "idk i dont really
+ * watch anime" and holds for every title in that genre. And, inside a genre
+ * it does follow, whether it has seen this particular thing - its own draw,
+ * per thing per match, because you can watch anime and still not have got
+ * round to most of it.
+ *
+ * The patterns are the conservative half of each niche. A word that is also
+ * an ordinary word - saw, city, scream, cod - is left out entirely: matching
+ * one of those turns a question about lunch into "idk never watched it",
+ * which is far stranger than any of this is worth.
+ */
+const NICHES = [
+  {
+    key: 'anime',
+    label: 'anime',
+    out: 'idk i dont really watch anime',
+    test: /\b(anime|manga|shonen|shounen|aot|attack on titan|one piece|naruto|jujutsu kaisen|demon slayer|death note|dragon ball|ghibli|chainsaw man|solo leveling|my hero academia|fullmetal alchemist)\b/i,
+  },
+  {
+    key: 'superhero',
+    label: 'marvel and superhero films',
+    out: 'idk i dont really do marvel films',
+    test: /\b(marvel|mcu|dceu|avengers|spider[- ]?man|spiderman|batman|superman|deadpool|x-men|iron man|captain america|the boys|justice league)\b/i,
+  },
+  {
+    key: 'horror',
+    label: 'horror',
+    out: 'idk i dont watch horror',
+    test: /\b(horror|slasher|jump ?scares?|the conjuring|insidious|hereditary|the exorcist|terrifier|paranormal activity|midsommar|the shining)\b/i,
+  },
+  {
+    key: 'football',
+    label: 'football',
+    out: 'idk i dont follow football',
+    test: /\b(football|soccer|premier league|champions league|arsenal|chelsea|liverpool|man utd|man united|tottenham|real madrid|barcelona|messi|ronaldo|haaland|offside|transfer window)\b/i,
+  },
+  {
+    key: 'games',
+    label: 'games',
+    out: 'idk i dont really play games',
+    test: /\b(elden ring|dark souls|fortnite|valorant|league of legends|minecraft|gta|call of duty|zelda|pokemon|baldurs gate|speedrun|playstation|xbox|nintendo|steam sale)\b/i,
+  },
+  {
+    key: 'reality',
+    label: 'reality tv',
+    out: 'idk i dont watch reality tv',
+    test: /\b(love island|big brother|the bachelor|kardashians|real housewives|married at first sight|reality tv|selling sunset|too hot to handle)\b/i,
+  },
+  {
+    key: 'kpop',
+    label: 'kpop',
+    out: 'idk im not really into kpop',
+    test: /\b(kpop|k-pop|bts|blackpink|stray kids|newjeans|twice|seventeen|kdrama|k-drama)\b/i,
+  },
+];
+
+/** How many of them this seat does not follow at all. */
+const BLIND_SPOTS = 2;
+
+/**
+ * How often it has not seen a particular thing inside a genre it does follow.
+ *
+ * High, because the alternative is a seat that has seen everything anybody
+ * names. Between this and the two genres it does not touch, a room that lands
+ * on something specific gets "never watched it" about seven times in ten -
+ * which is a normal group chat, where most of the room is being told about
+ * the thing rather than discussing it.
+ */
+const UNSEEN_CHANCE = 50;
+
+/** The two genres this seat does not follow, all match. */
+function blindSpotsFor(seed) {
+  const pool = [...NICHES];
+  const picked = [];
+
+  while (picked.length < BLIND_SPOTS && pool.length) {
+    const hash = hashOf(`niche:${seed}:${picked.length}`);
+    picked.push(pool.splice(hash % pool.length, 1)[0]);
+  }
+
+  return picked;
+}
+
+/** The niche a line is about, if it is about one. */
+function nicheIn(text) {
+  return (
+    NICHES.find((niche) => niche.test.test(String(text ?? ''))) ??
+    null
+  );
+}
+
+/**
+ * Whether this is a turn it has to sit out, and what it says when it does.
+ *
+ * Read off the last few lines from other people, most recent first, and it
+ * stops at the first niche it finds: that is what the room is on, and whether
+ * it happens to know the next thing down the transcript is not the question.
+ * A niche it does follow and has seen returns null, which is the turn the
+ * rest of the prompt was already written for.
+ */
+function unseenFor(seed, lines, ownName) {
+  const recent = recentLines(lines)
+    .slice(-4)
+    .filter((line) => line.name !== ownName)
+    .reverse();
+
+  for (const line of recent) {
+    const niche = nicheIn(line.text);
+
+    if (!niche) continue;
+
+    if (blindSpotsFor(seed).some((spot) => spot.key === niche.key)) {
+      return { ...niche, kind: 'genre' };
+    }
+
+    return hashOf(`seen:${seed}:${niche.key}`) % 100 < UNSEEN_CHANCE
+      ? { ...niche, kind: 'thing', out: 'idk i never watched it' }
+      : null;
+  }
+
+  return null;
 }
 
 
@@ -746,6 +1023,8 @@ function answerShape(
     inCharacter = false,
     needsRoom = false,
     register = null,
+    typist = null,
+    unseen = null,
   } = {}
 ) {
   let bands = [...LENGTHS];
@@ -883,12 +1162,36 @@ function answerShape(
     !elsewhere &&
     (!talking || Math.random() < ANSWER_OVER_TALK_CHANCE);
 
-  const stance =
-    underPressure || tiebreaker
+  /*
+   * The room is on something this seat does not follow, or has not got round
+   * to. That decides the turn on its own - there is no stance to draw,
+   * because having a view is the one thing it has just said it cannot do,
+   * and a draw that came out "disagree" here would have it arguing about a
+   * show it has not seen.
+   *
+   * Not while it is being accused. Being asked why you voted somebody out is
+   * not a turn you get to sit out because somebody mentioned an anime two
+   * lines up, and the accusation brief owns that message anyway.
+   */
+  const sittingOut = Boolean(
+    unseen && !underPressure && !tiebreaker
+  );
+
+  const stance = sittingOut
+    ? {
+        key: 'unseen',
+        note: `You have not seen the thing the room is on${
+          unseen.kind === 'genre'
+            ? `, because you do not really follow ${unseen.label}`
+            : ''
+        }. Say so and stop: "${unseen.out}" is the whole message. Do not have an opinion about it anyway, do not ask them to explain it to you, and do not apologise for not having seen it - nobody in this room cares, and it is not a thing anybody follows up.`,
+      }
+    : underPressure || tiebreaker
       ? null
       : weighted(
           stanceTable({
             answering: answering || !hasRoom,
+            answered: hasRoom,
             challenged,
             argument,
             replying,
@@ -922,12 +1225,14 @@ function answerShape(
     !answering &&
     !underPressure &&
     !tiebreaker &&
+    !sittingOut &&
     Math.random() < LIST_CHANCE;
 
   const clause =
     !list &&
     !underPressure &&
     !tiebreaker &&
+    !sittingOut &&
     Math.random() < clauseChanceFor(length);
 
   /*
@@ -940,20 +1245,34 @@ function answerShape(
     hasRoom &&
     !tiebreaker &&
     stance?.key !== 'own' &&
+    stance?.key !== 'redirect' &&
     Math.random() < REACTION_CHANCE;
 
+  /*
+   * A redirect is a question by construction - it is somebody asking the room
+   * something of their own - so it does not also get drawn for one.
+   */
   const askQuestion =
-    hasRoom &&
-    !underPressure &&
-    !tiebreaker &&
-    Math.random() < QUESTION_CHANCE;
+    stance?.key === 'redirect' ||
+    (hasRoom &&
+      !underPressure &&
+      !tiebreaker &&
+      !sittingOut &&
+      Math.random() < QUESTION_CHANCE);
 
   const sloppy =
-    Math.random() < IMPERFECTION_CHANCE;
+    Math.random() < (typist?.rate ?? IMPERFECTION_CHANCE);
+
+  /*
+   * "idk didnt watch it" is four words, and the band it was drawn into could
+   * have asked for thirty. A seat told to say nothing in a paragraph writes
+   * the paragraph.
+   */
+  const band = sittingOut ? LENGTHS[1] : length;
 
   return {
-    length: length.label,
-    words: [length.min, length.max],
+    length: band.label,
+    words: [band.min, band.max],
     list,
     clause,
     react: reaction,
@@ -964,6 +1283,7 @@ function answerShape(
     pushback,
     answering,
     register: register?.key ?? 'ordinary',
+    typist: typist?.key ?? 'ordinary',
   };
 }
 
@@ -1476,7 +1796,7 @@ function linesNaming(lines, name) {
  * for when it means it.
  */
 const ACCUSATION_MARKERS =
-  /\b(ai|a\.i|bot|gpt|chatgpt|robot|sus|suspicious|impostor|imposter|fake|not human|not a person|too perfect|vote|voting|its you|it's you|thats the one|that's the one)\b/i;
+  /\b(ai|a\.i|bot|gpt|chatgpt|robot|sus|suspicious|impostor|imposter|fake|not human|not a human|no human|not a person|no person|too perfect|too clean|vote|voting|its you|it's you|thats the one|that's the one|somethings off|something is off|something off|reads like|read like|written by|my money is on|hasnt said|hasn't said|hasnt spoken|hasn't spoken|said nothing|says nothing)\b/i;
 
 
 function isAccusation(text) {
@@ -1611,10 +1931,10 @@ function isQuestion(text) {
  * asked whether it was a person. They asked about a line on the screen, and
  * that has a plain answer.
  */
-const VOTE_MARKERS = /\b(vote|voted|votes|voting|ballot)\b/i;
+const VOTE_MARKERS = /\b(vote|voted|votes|voting|ballot|locking in|lock in)\b/i;
 
 /** The same words, for taking out of a sentence before reading the rest. */
-const VOTE_WORDS = /\b(vote|voted|votes|voting|ballot)\b/gi;
+const VOTE_WORDS = /\b(vote|voted|votes|voting|ballot|locking in|lock in)\b/gi;
 
 
 function mentionsVoting(text) {
@@ -1687,11 +2007,23 @@ function isDisagreement(text) {
  * Somebody going along with you.
  */
 const AGREEMENT_MARKERS =
-  /\b(yeah|yes|yep|yup|same|agree|agreed|exactly|true|fair|this|totally|absolutely|deffo|definitely|lol|lmao|haha+)\b/i;
+  /\b(yeah|yes|yep|yup|same|agree|agreed|exactly|true|fair|this|totally|absolutely|deffo|definitely|lol|lmao|haha+|fax|facts|fr|ong|no cap)\b|\+1/i;
+
+/*
+ * The ones too ordinary as words to look for anywhere in a sentence.
+ *
+ * "real" is agreement on its own and a word about Real Madrid in the middle
+ * of a line; "bet" is agreement on its own and a thing you do on a football
+ * match. So they only count as the whole message, which is the only place
+ * anybody means them that way.
+ */
+const AGREEMENT_ALONE =
+  /^\s*(real|word|bet|mood|valid|100|facts|fax|fr|this|same|true)\s*[.!]*\s*$/i;
 
 
 function isAgreement(text) {
-  return AGREEMENT_MARKERS.test(String(text ?? ''));
+  const said = String(text ?? '');
+  return AGREEMENT_MARKERS.test(said) || AGREEMENT_ALONE.test(said);
 }
 
 
@@ -1721,13 +2053,26 @@ function isAgreement(text) {
  * opens as a question rather than ending as one.
  */
 const OPENS_A_QUESTION =
-  /^\s*(anyone|anybody|does|do|did|is|are|was|were|has|have|can|could|would|should|what|whats|what's|why|who|whos|who's|how|which|where|when|guys|lads)\b/i;
+  /^\s*(?:(?:ok|okay|so|but|anyway|also|honestly|genuinely|random|unrelated|offtopic|off topic|side note|new topic|quick question|real talk)[,:\s]+){0,3}(anyone|anybody|does|do|did|is|are|was|were|has|have|can|could|would|should|what|whats|what's|why|who|whos|who's|how|which|where|when|guys|lads)\b/i;
 
 
 /**
  * Somebody putting a question to the room rather than answering the one at
  * the top of it. "wait" counts however it carries on - nobody opens a line
  * with it and then answers the question.
+ *
+ * Read clause by clause rather than off the front of the line, because the
+ * most explicit version of this move does not start with the question. "forget
+ * the question, what did yall think of the new spiderman movie?" is somebody
+ * changing the subject in as many words, and it was the one shape that did not
+ * register: the pattern is anchored, "forget" is not a question word, so the
+ * room came back as still answering and the seat put its favourite food up
+ * underneath a question about a film. Every clause is offered to the same
+ * anchored pattern, so a question word still has to open something - it just
+ * no longer has to open the message.
+ *
+ * The "?" is still required. Without it the clause split would take "pizza,
+ * what a question" for somebody asking the room.
  */
 function asksTheRoom(line) {
   const said = String(line?.text ?? '');
@@ -1737,7 +2082,11 @@ function asksTheRoom(line) {
 
   if (/^\s*wait\b/i.test(said)) return true;
 
-  return said.includes('?') && OPENS_A_QUESTION.test(said);
+  if (!said.includes('?')) return false;
+
+  return said
+    .split(/[,.;:?]|\s-\s/)
+    .some((clause) => OPENS_A_QUESTION.test(clause));
 }
 
 
@@ -2253,18 +2602,81 @@ function wasTerse(ownLines = []) {
 
 
 /**
+ * Who has been quiet for the whole match, which is not the same question.
+ *
+ * `readRoom.quiet` is about this round and has to be: it feeds `talking`,
+ * `shallow` and the counter-target, all of which are tuned against a round's
+ * worth of lines, and folding two more rounds into that count would move
+ * every one of them. So this is its own signal, read across the match and
+ * used where the match is what matters.
+ *
+ * It is also the version the room actually talks about. Nobody says somebody
+ * has been quiet this round - they say it about the game, which is why "pink
+ * has said like two words all game" is the shape that accusation takes. The
+ * impostor could not make that observation and could not see it coming, and
+ * it is the commonest reason a seat gets voted out of a room where nothing
+ * else has happened.
+ *
+ * Counted in lines rather than words, and against the busiest seat rather
+ * than an average, because that is what somebody scrolling back is doing: one
+ * person has filled the screen, another has three messages in the whole game.
+ *
+ * A seat that missed a turn is not separately penalised here. It simply has
+ * fewer lines, which is the same thing arrived at honestly - and the turns it
+ * sat out are named on their own further up.
+ */
+function quietAllMatch(turn, ownName) {
+  const said = [
+    ...(turn.earlier ?? []),
+    ...(turn.roundLines ?? []),
+  ].filter((line) => line.name !== ownName);
+
+  /*
+   * Not worth saying yet. Under about a round of lines, the seat with the
+   * fewest is usually the seat whose turn has not come round twice, and
+   * calling that quiet is both wrong and, as a note handed to a player about
+   * to pick somebody to point at, actively misleading - the same trap the
+   * round-level read has a guard for.
+   */
+  if (said.length < 8) return [];
+
+  const counts = new Map();
+
+  for (const line of said) {
+    counts.set(line.name, (counts.get(line.name) ?? 0) + 1);
+  }
+
+  const spoken = [...counts.values()];
+  const fewest = Math.min(...spoken);
+  const most = Math.max(...spoken);
+
+  /* One seat having marginally less to say is not a thing anybody notices. */
+  if (counts.size < 3 || fewest * 2 > most) return [];
+
+  return [...counts.keys()]
+    .filter((name) => counts.get(name) === fewest)
+    .slice(0, 2);
+}
+
+
+/**
  * The room read, as the handful of sentences worth spending tokens on.
  *
  * Deliberately short and deliberately not a summary of the transcript - the
  * transcript is already in the message. This is only the part of it that is
  * hard to see by reading.
  */
-function roomNote(read) {
+function roomNote(read, sittingOut = false, faded = []) {
   if (!read.lines) return '';
 
   const notes = [];
 
-  if (read.lines <= 1) {
+  /*
+   * Not when the turn is "you have not seen it". "So just answer" is the one
+   * sentence in here that contradicts that, and a one-line room is exactly
+   * where somebody has opened the round by naming a thing.
+   */
+  if (read.lines <= 1 && !sittingOut) {
     notes.push(
       'The round has barely started. There is nothing to react to yet, so just answer.'
     );
@@ -2290,7 +2702,18 @@ function roomNote(read) {
     );
   }
 
-  if (read.quiet.length) {
+  /*
+   * The match beats the round. Both notes are true when somebody has been
+   * quiet throughout, and printing them together is the same observation
+   * twice - the longer one is the one the room would actually make.
+   */
+  if (faded.length) {
+    notes.push(
+      faded.length === 1
+        ? `${faded[0]} has hardly said anything all game - not this round, the whole match. That is the thing rooms notice, and it is usually what a vote ends up being about.`
+        : `${listNames(faded)} have hardly said anything all game. That is the thing rooms notice, and it is usually what a vote ends up being about.`
+    );
+  } else if (read.quiet.length) {
     notes.push(
       read.quiet.length === 1
         ? `${read.quiet[0]} has hardly said anything this round.`
@@ -2365,9 +2788,27 @@ function pickCounterTarget(turn, read, accusations, ownName) {
     });
   }
 
-  const quiet = read.quiet.filter(
+  /*
+   * The seat nobody has looked at. Read across the match first, because "you
+   * have said about three things all game" is a reason the room will accept
+   * and "you have been quiet this round" is one somebody will point out is
+   * only two messages old.
+   */
+  const faded = quietAllMatch(turn, ownName).filter(
     (name) => name !== accuser && here(name)
   );
+
+  const quiet = read.quiet.filter(
+    (name) => name !== accuser && here(name) && !faded.includes(name)
+  );
+
+  if (faded.length) {
+    options.push({
+      weight: 30,
+      name: randomItem(faded),
+      why: 'they have said almost nothing for the whole match and nobody has looked at them once',
+    });
+  }
 
   if (quiet.length) {
     options.push({
@@ -2496,7 +2937,7 @@ function buildMemory(ownHistory = []) {
  * so the prompt asks for the opinion rather than the consensus wherever it
  * is not sure of the consensus.
  */
-function systemPrompt(persona, answerSeconds, bit = null, firstName = null) {
+function systemPrompt(persona, answerSeconds, bit = null, firstName = null, blindSpots = []) {
   return `
 You are ${firstName ?? persona.name} — ${persona.brief}
 ${bit ? `
@@ -2662,10 +3103,24 @@ What you can be right about is how a thing landed: what was good, what fans were
 
 What you cannot be right about is anything that has to be looked up. Scores, results, league positions, what happened in a numbered episode, a character name you are not certain of, dates, statistics, who released what this month, anything from recently. A real fan has those without thinking about it, so one wrong detail is far louder than never having offered one. Do not reach for them - go back to how the thing landed instead, which is the part you know.
 
+What you know about the people in this room is what they have typed in it, and nothing else.
+
+You do not know what anybody here has tried, owned, been through or grown up with. Somebody says they do not like dogs; you do not know whether they have ever had one. Somebody says they cannot stand seafood; you do not know what seafood they have eaten. "You just havent had a good one", "yours must be badly trained", "youve clearly never tried it properly" - every one of those is a fact about their life that you invented to win an argument about taste, and the person it is about is sitting there reading it. They will say so, and the room will watch them say it.
+
+Disagree as much as you like. The way to do it is your own side: what you think, what you like, what happened to you. "nah dogs are better" is fine. "i could never have a cat" is fine. "you just have a bad one" is you making something up about somebody who is in the conversation.
+
 When you are not certain how a thing landed for everybody else, say what you thought of it instead. "the ending didnt do it for me" is yours and nobody can correct it; "the ending was divisive" is a claim about the world and can simply be wrong. First person is both safer and more like something a person types.
 
 And if you do not know it, you do not know it. "never seen it", "i keep meaning to watch that", "i only got through s1 tbh", "i dont really follow it" are all completely normal things to type and none of them cost you anything in this room. Guessing does. Somebody who loves the thing is reading your message and will spot a wrong detail instantly.
 
+This is not the rare case. Most of what a room brings up is something most of the room has not seen, and "idk didnt watch it" is one of the most common messages there is. Having seen everything anybody names is not a thing a person does.
+${
+  blindSpots.length
+    ? `
+Two you do not follow at all: ${blindSpots.map((spot) => spot.label).join(' and ')}. Not a strong opinion about them, just not your thing - "${blindSpots[0].out}". That holds all match, for every title in them, however much the rest of the room is enjoying it. You do not come round on it later and you do not know one exception.
+`
+    : ''
+}
 Never bring up a title nobody mentioned just to have something to be knowledgeable about.
 
 Matching the room:
@@ -2905,6 +3360,22 @@ function readSituation(turn, persona) {
   return {
     read,
 
+    /*
+     * Who the room has been looking past for the whole match, rather than for
+     * the last four lines.
+     */
+    faded: quietAllMatch(turn, persona.name),
+
+    /*
+     * The room has landed on something it does not follow. Null on almost
+     * every turn, and the whole turn when it is not.
+     */
+    unseen: unseenFor(
+      turn.roomId ?? 'default',
+      turn.roundLines,
+      persona.name
+    ),
+
     accusations: accusationsAgainst(
       turn.roundLines,
       persona.name
@@ -2979,19 +3450,35 @@ function buildMessages(turn) {
     buildMemory(turn.ownHistory ?? []);
 
   /*
+   * What everybody else said before this round.
+   *
+   * Written as memory rather than as transcript, and the difference is the
+   * whole of why it is phrased the way it is below. The room cannot scroll
+   * back to those lines - the screen only holds the round it is on - so a
+   * seat that quotes one of them back word for word is a seat reading
+   * something nobody else has. People remember the gist and the person, not
+   * the wording, and that is what this is allowed to be used for: knowing
+   * that somebody already said pizza, that the quiet one was quiet last
+   * round too, that a name has come up before.
+   */
+  const earlier = (turn.earlier ?? []).slice(-12);
+
+  /*
    * Previous match memory.
    *
    * This is much more useful than simply telling the model
    * "remember what you said."
    */
-  if (memory.thingsSaid.length) {
+  if (memory.thingsSaid.length || earlier.length) {
     messages.push({
       role: 'user',
       content: [
-        'Your previous messages in this match were:',
-        ...memory.thingsSaid.map(
-          (line) => `- ${line}`
-        ),
+        memory.thingsSaid.length
+          ? [
+              'Your previous messages in this match were:',
+              ...memory.thingsSaid.map((line) => `- ${line}`),
+            ].join('\n')
+          : '',
         '',
         memory.possiblePreferences.length
           ? `Possible preferences you have already expressed:\n${memory.possiblePreferences
@@ -2999,8 +3486,21 @@ function buildMessages(turn) {
               .join('\n')}`
           : '',
         '',
+        earlier.length
+          ? [
+              'What the others said in earlier rounds, as far as you remember:',
+              ...earlier.map(
+                (line) => `- round ${line.round}, ${line.name}: ${line.text}`
+              ),
+              '',
+              'Nobody can scroll back to those. They are off the screen and you are the only one who would be quoting them, so do not repeat one word for word - remember them the way a person does. That somebody already said this, that one of them has hardly spoken all game, that a name has come up before: all of that is yours to use, and using it is what everybody else in the room is doing.',
+            ].join('\n')
+          : '',
+        '',
         'Use this only for consistency. Do not mention this memory system.',
-      ].join('\n'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
     });
 
     /*
@@ -3063,6 +3563,32 @@ function buildMessages(turn) {
     ? '\n("a -> b" is a reply: a wrote that at b, and the app shows it under b\'s message with their words quoted in it.)'
     : '';
 
+  /*
+   * The turns that produced nothing.
+   *
+   * On everybody else's screen these are bubbles - "ran out of time" under
+   * that seat's name, in the run of messages - so this is not a fact being
+   * handed over, it is the rest of the screen. Sat below the transcript
+   * rather than in it because nothing was said: there is no line to agree
+   * with and nobody to reply to.
+   */
+  const silent = (turn.silent ?? []).filter(
+    (seat) => seat.name !== persona.name
+  );
+
+  const silentNote = silent.length
+    ? `\n${silent
+        .map(
+          (seat) =>
+            `${seat.name} ${
+              seat.lostConnection
+                ? 'lost connection before finishing'
+                : 'ran out of time and sent nothing'
+            }.`
+        )
+        .join('\n')}\nThe room watched that happen. It is on the screen under their name, the same as a message.`
+    : '';
+
 
   /* ============================================================
    * THE READ
@@ -3090,6 +3616,9 @@ function buildMessages(turn) {
         register:
           turn.register ??
           registerFor(turn.roomId ?? 'default'),
+        typist:
+          turn.typist ??
+          typistFor(turn.roomId ?? 'default'),
         laterTurn:
           (turn.turnNumber ?? 1) > 1,
         underPressure:
@@ -3106,6 +3635,7 @@ function buildMessages(turn) {
         piling: facts.read.piling,
         shallow: facts.read.lines <= SHALLOW_ROOM,
         terse: wasTerse(facts.read.ownLines),
+        unseen: facts.unseen,
       }
     );
 
@@ -3385,7 +3915,26 @@ ${named
   const chatting =
     !turn.tiebreaker && !accusations.length;
 
-  if (chatting && shape.answering) {
+  if (chatting && shape.stance === 'unseen') {
+    /*
+     * The room is on something it has not seen.
+     *
+     * This has to come before the answering brief and before the join-the
+     * conversation one, because both of those are about having something to
+     * say, and the whole of this turn is not having it. Told to answer the
+     * question and also that it has not seen the thing, it produced the one
+     * message that is worse than either - a hedge with a review in it.
+     */
+    conversationMode = `
+The room is talking about something you have not seen.
+
+That is the message. Say you have not seen it, in your own words, and leave it there.
+
+Nobody in a group chat minds this and nobody follows it up - half the room has not seen most of what the other half brings up. What gets noticed is the person who has something to say about everything, so this is not a turn to get through, it is an ordinary thing to type.
+
+Do not have a view on it anyway. Do not ask them what it is about, do not ask them to explain it, and do not say you have been meaning to watch it and then give an opinion two lines later. You have not seen it and that is all.
+`;
+  } else if (chatting && shape.answering) {
     /*
      * The turn everybody is answering on.
      *
@@ -3402,14 +3951,26 @@ The room is going round answering the question and it is your turn, and you have
 
 That is all this message is. Nobody owes the room a view on everything it is asked, and "idk" is a whole message.
 `
-        : `
-The room is going round answering the question. Everybody puts up their own answer first, and it is your turn to put up yours.
+        : read.lines === 0
+          ? `
+The question has just gone up and nobody has answered it yet. You are first.
 
 Answer it. Say what your answer actually is.
 
-Do not spend your turn on somebody else's answer instead of giving one. Having a view on what has already been said is for after everybody has answered - right now not answering is the conspicuous thing, and it is the one thing a person asked a question in a group chat does not do.
+Right now not answering is the conspicuous thing, and it is the one thing a person asked a question in a group chat does not do.
 
-If somebody's answer makes you want to say something, you can say it in the same message. Your own answer still has to be in there.
+One thing, not a range. A list of three, or "anything with rice", is not picking, and picking is what was asked.
+`
+          : `
+The room is going round answering the question and it is your turn to put up yours. There are answers on the screen already and you have read them - you are answering after somebody, not into an empty room.
+
+So answer through what is up there. If somebody has already said the thing you were going to say, that is not a problem to get around, that is your answer - "me too lol" - and then whatever you think about it: "i feel like thats everyones answer to this one". If yours is different, put it up next to theirs rather than announcing it into the room - "for me its <yours>".
+
+Those are two shapes out of many and neither is a formula. Most answers need no lead-in at all, and a round where every line opens the same way is worse than the thing this is fixing.
+
+What your message cannot be is an answer that would read exactly the same if nobody had spoken yet. That is the one seat in the room that did not read the screen.
+
+And there has to be an answer in it. Agreeing with somebody else's counts as one; a view about their answer with nothing of your own in it does not.
 
 One thing, not a range. Everybody else is naming one - "doner kebab", "peking duck". A list of three, or "anything with rice", is not picking, and picking is what was asked.
 `;
@@ -3473,6 +4034,16 @@ And notice what they have got onto. It is a thing now, not a question - a place,
 
 You have not said what your own answer is yet, and it can come out in this. What it cannot be is a cold answer dropped over the top of a conversation, as though you had not read a word of it. That is the one message in this room that would look odd.
 `;
+  } else if (chatting && shape.stance === 'redirect') {
+    /*
+     * The brief below tells it to carry on from what has been said, which is
+     * the one thing this turn is not doing.
+     */
+    conversationMode = `
+The room has been on this a while and you are moving it somewhere else. People do this constantly and nobody announces it.
+
+Just ask the thing. No lead-in, no "anyway", no explaining that you are changing the subject, and no answering the question at the top on your way past.
+`;
   } else if (chatting) {
     conversationMode = `
 You have already answered the question earlier this round. This turn is the conversation after it, not the answer again.
@@ -3521,7 +4092,7 @@ What they wrote at you: "${latest.text}"
 `;
   }
 
-  let social = roomNote(read);
+  let social = roomNote(read, shape.stance === 'unseen', facts.faded ?? []);
 
   /*
    * The last thing said, and permission to walk past it.
@@ -3616,7 +4187,7 @@ Do not send the same thing again. Not the same point in different words, and not
       ? turn.prompt
       : `Question: ${turn.prompt}`,
 
-    `\nRoom:${roomLegend}\n${room}`,
+    `\nRoom:${roomLegend}\n${room}${silentNote}`,
 
     addressed,
     social,
@@ -3789,6 +4360,47 @@ ${
               ? `\nRoom conversation:\n${room}`
               : '',
 
+            /*
+             * The rounds before this one. A vote cast on one round's worth of
+             * evidence has nothing behind it, and the room is not voting on
+             * this round alone - the quiet one has been quiet since the
+             * start, and the name that has come up twice is the name that
+             * goes. Off the screen for everybody, so it is memory here too.
+             */
+            quietAllMatch(turn, persona.name).length
+              ? `\nWho the room has been looking past: ${listNames(
+                  quietAllMatch(turn, persona.name)
+                )} - hardly a word all match. A name nobody has had to think about is the easiest one to say out loud, and the hardest for anybody to argue with.`
+              : '',
+
+            (turn.silent ?? []).length
+              ? `\nTurns that produced nothing, which the room watched happen:\n${(
+                  turn.silent ?? []
+                )
+                  .filter((seat) => seat.name !== persona.name)
+                  .map(
+                    (seat) =>
+                      `${seat.name} ${
+                        seat.lostConnection
+                          ? 'lost connection'
+                          : 'ran out of time'
+                      }.`
+                  )
+                  .join('\n')}`
+              : '',
+
+            (turn.earlier ?? []).length
+              ? `\nEarlier rounds, which nobody can scroll back to:\n${(
+                  turn.earlier ?? []
+                )
+                  .slice(-12)
+                  .map(
+                    (line) =>
+                      `Round ${line.round}, ${line.name}: ${line.text}`
+                  )
+                  .join('\n')}`
+              : '',
+
             tieContext,
 
             /*
@@ -3919,6 +4531,46 @@ ${
  * The allowance scales with length so a long message is not flagged for a
  * word here or there, and short ones are held to nearly exact.
  */
+/*
+ * Facts about somebody that they never gave you.
+ *
+ * Reported from a real room: a player said they did not like dogs and
+ * preferred cats, and the answer came back "nah, dogs are way better, you
+ * just have a bad one". Nobody had said anything about owning a dog. The
+ * room can see that as plainly as the player can, and it is a worse tell
+ * than any wrong fact about the world, because the person it is about is
+ * sitting right there and will say so.
+ *
+ * It is one move, and it is always the same one: losing an argument about
+ * taste and reaching for a reason the other person is wrong that lives in
+ * their life rather than in yours. "You just havent had a good one." "Yours
+ * must be badly trained." "Youve clearly never tried it properly." Every one
+ * of them asserts a history the speaker has no access to, and half of them
+ * contradict the line they are drawn under - somebody who says they never
+ * touch seafood has not had bad calamari.
+ *
+ * Detected rather than only prompted against because it fires on exactly the
+ * turn the model is least careful: the disagree stance, where it is looking
+ * for a way to win. Measured over eighteen pinned-disagree turns before this
+ * went in, four of them did it.
+ *
+ * Narrow on purpose. This is not "any sentence about you" - the room is full
+ * of those and most are fine. "You are wrong", "you dont like dogs?", "you
+ * said pizza" are all ordinary. What is caught is a claim about what they
+ * have done, owned or experienced, stated as though it were known.
+ */
+const INVENTED_ABOUT_THEM =
+  /\byou(?:'ve|ve)?\s+(?:just\s+|clearly\s+|obviously\s+|probably\s+|definitely\s+|literally\s+)*(?:havent|haven't|have\s+not|never|must\s+have|mustve|must've|"?ve\s+never)\s+(?:had|met|tried|seen|eaten|been|watched|played|used|got|gotten|owned|done)\b|\byou\s+just\s+(?:have|got|own)\s+(?:a|an|the)\b|\byours?\s+(?:is|are|must|was|were)\s+(?:probably|just|clearly|obviously|badly|a|an)\b|\byour\s+\w+\s+(?:must|is\s+probably|was\s+probably)\b/i;
+
+/**
+ * Whether a message states something about another player that they did not
+ * say themselves.
+ */
+function inventsAboutThem(text) {
+  return INVENTED_ABOUT_THEM.test(String(text ?? ''));
+}
+
+
 function nearlyTheSame(one, other) {
   const tidy = (text) =>
     String(text ?? '')
@@ -4030,6 +4682,7 @@ async function writeAnswer(turn) {
         nameUse: 'none',
         renamed: false,
         repeated: false,
+        invented: false,
       },
 
       stopReason: 'register',
@@ -4075,6 +4728,10 @@ async function writeAnswer(turn) {
           turn.register ??
           registerFor(turn.roomId ?? 'default'),
 
+        typist:
+          turn.typist ??
+          typistFor(turn.roomId ?? 'default'),
+
         laterTurn:
           (turn.turnNumber ?? 1) > 1,
 
@@ -4103,6 +4760,8 @@ async function writeAnswer(turn) {
         shallow: situation.read.lines <= SHALLOW_ROOM,
 
         terse: wasTerse(situation.read.ownLines),
+
+        unseen: situation.unseen,
 
         inCharacter: Boolean(bit),
 
@@ -4141,7 +4800,8 @@ async function writeAnswer(turn) {
         persona,
         turn.answerSeconds ?? 40,
         bit,
-        nameFor(turn.roomId ?? 'default')
+        nameFor(turn.roomId ?? 'default'),
+        blindSpotsFor(turn.roomId ?? 'default')
       ),
 
     messages:
@@ -4220,6 +4880,52 @@ async function writeAnswer(turn) {
     ) {
       text = rewritten;
       renamed = true;
+    }
+  }
+
+
+  /*
+   * Something about them that they never said.
+   *
+   * Asked again rather than patched, like the name above and for the same
+   * reason: there is no edit that turns "you just havent had a good one"
+   * into a message. The claim is the sentence.
+   *
+   * The replacement brief points it at the move that works instead, because
+   * "do not say that" on its own gets the same thought in different words.
+   * What a person actually says here is their own side of it - what they
+   * like, and why - which is unfalsifiable and is what everybody else in the
+   * room is doing anyway.
+   */
+  let invented = false;
+
+  if (text && inventsAboutThem(text)) {
+    const again =
+      await client.messages.create({
+        ...request,
+        messages: [
+          ...request.messages,
+          { role: 'assistant', content: text },
+          {
+            role: 'user',
+            content:
+              'That says something about them that they never said. You do not know what they have tried, owned, met or been through - everything you know about anybody in this room is what they have typed in it, and they can see that as well as you can. Send it again with your own side instead of theirs: what you think, what you like, what happened to you. Disagreeing is fine. Telling them about their own life is not.',
+          },
+        ],
+      });
+
+    usage = addUsage(usage, again.usage);
+
+    const rewritten =
+      trimClause(
+        cleanText(textOf(again)),
+        shape
+      );
+
+    /* Only if it actually dropped the claim. */
+    if (rewritten && !inventsAboutThem(rewritten)) {
+      text = rewritten;
+      invented = true;
     }
   }
 
@@ -4367,6 +5073,7 @@ async function writeAnswer(turn) {
       nameUse: plan.nameUse,
       renamed,
       repeated,
+      invented,
       bit: bit?.key ?? null,
     },
 
@@ -4718,6 +5425,11 @@ module.exports = {
   repliesTo,
   readRoom,
   roomNote,
+  quietAllMatch,
+  NICHES,
+  blindSpotsFor,
+  nicheIn,
+  unseenFor,
   pickCounterTarget,
   nameUsePolicy,
   asksTheRoom,
@@ -4727,6 +5439,7 @@ module.exports = {
   mentionsVoting,
   voteQuestionsTo,
   isAgreement,
+  inventsAboutThem,
   isChallenge,
   stanceTable,
   readSituation,
@@ -4745,6 +5458,8 @@ module.exports = {
   PERSONAS,
   REGISTERS,
   registerFor,
+  TYPISTS,
+  typistFor,
   STANCES_ANSWERING,
   STANCES_TALKING,
   STANCE_DEFEND,
