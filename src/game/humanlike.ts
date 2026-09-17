@@ -220,87 +220,11 @@ const HEAT_BIAS = 1.0;
 const SAME_PARTNER_DAMP = 0.45;
 
 /**
- * What the message actually says, which none of the weights above could see.
- *
- * Everything else here reads the shape of the round — how recent, how hot,
- * who you were last talking to — and a target picked on shape alone lands
- * wherever the room happened to put its newest message. Measured over six
- * thousand draws on a round holding one line accusing this seat by name and
- * one "lol" sent after it, the "lol" was picked five times as often. Nobody
- * replies to "lol". Everybody replies to being named.
- *
- * So these are multipliers on top, and they are about one question only:
- * whether a message is the kind of thing somebody writes back at. That is not
- * the same question as whether a line is an accusation, which the impostor's
- * own read answers in its own way and for its own reasons — this one is
- * asked of every seat in the room, stand-ins included, and it is asked of the
- * message rather than of the player.
- */
-const INVITES = {
-  /* Bare filler. It is a reaction, not a thing said, and there is nothing to
-   * write back at. "same" gets a heart, not a reply. */
-  filler: 0.15,
-  /* A question put to the room is the most answerable thing on a screen. */
-  question: 2.2,
-  /* Somebody being wrong is the other one. */
-  disagreement: 1.6,
-  /* Your name in somebody else's message. Nothing else on the screen is
-   * addressed to you, and this pulls harder than either. */
-  named: 3,
-};
-
-const FILLER = /^\s*(lol|lmao|lmfao|haha+|same|yeah|yep|yup|true|fair|this|fax|facts|fr|ong|real|word|bet|mood|valid|nice|ok|okay|agreed?|exactly|\+1|100)\s*[.!?]*\s*$/i;
-
-const ASKS = /\?/;
-
-const PUSHES_BACK =
-  /\b(nah|nope|wrong|disagree|overrated|underrated|awful|terrible|rubbish|bollocks|mid|worst|thats not|that's not|isnt|isn't|aint)\b/i;
-
-/** A name in a message, matched whole so "pink" does not fire on "pinkish". */
-function namesYou(text: string, selfName?: string | null) {
-  if (!selfName) return false;
-  const bare = selfName.replace(/^(mr|mrs|ms|miss)\.?\s+/i, '').trim();
-  if (bare.length < 2) return false;
-  return new RegExp(
-    `\\b${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
-    'i'
-  ).test(text);
-}
-
-/**
- * How much this particular message pulls, on what it says.
- *
- * Multiplicative with the shape weights rather than replacing them: a hot
- * thread full of questions should still beat a cold question, and the newest
- * message should still beat an old one that merely has a question mark in it.
- */
-function invitesReply(text: string, selfName?: string | null) {
-  const said = String(text ?? '');
-
-  let pull = 1;
-
-  if (namesYou(said, selfName)) pull *= INVITES.named;
-
-  /* Filler is filler even when it is aimed at you, and "lol" with your name
-   * in it is still not a message anybody writes a paragraph under. */
-  if (FILLER.test(said)) return pull * INVITES.filler;
-
-  if (ASKS.test(said)) pull *= INVITES.question;
-  else if (PUSHES_BACK.test(said)) pull *= INVITES.disagreement;
-
-  return pull;
-}
-
-/**
  * Something to write back at, or null to answer the prompt cold. Pass the
  * answers to the round being played — reaching into an earlier round would
  * point at something nobody can see any more.
  */
-export function pickReplyTarget(
-  answers: Answer[],
-  selfId?: string | null,
-  selfName?: string | null
-) {
+export function pickReplyTarget(answers: Answer[], selfId?: string | null) {
   const spoken = answers.filter((a) => a.kind === 'answer' && !a.timedOut);
   if (spoken.length === 0) return null;
 
@@ -317,20 +241,7 @@ export function pickReplyTarget(
       : []
   );
 
-  /*
-   * And never your own message.
-   *
-   * The reply is drawn as a quote of the message it answers, so this put the
-   * seat's own words in a box above its own next message — somebody quoting
-   * themselves to reply to themselves. It was not a rare draw either: its own
-   * line is often the most recent thing on the screen and recency is the
-   * heaviest weight here, so in a three-seat room it was picking itself on
-   * about seven of every ten replies it made, and one in nine in a five-seat
-   * round.
-   */
-  const open = spoken.filter(
-    (a) => !answered.has(a.id) && a.playerId !== selfId
-  );
+  const open = spoken.filter((a) => !answered.has(a.id));
   if (open.length === 0) return null;
 
   // Somebody wrote back at you. That pulls harder than anything else on this
@@ -344,21 +255,12 @@ export function pickReplyTarget(
     const yours = new Set(
       spoken.filter((a) => a.playerId === selfId).map((a) => a.id)
     );
-    /*
-     * Written at you by the arrow, or written at you by name.
-     *
-     * Only the arrow used to count, which missed the commonest way one seat
-     * addresses another in this room: typing their name. "red has said
-     * nothing all game" is as clearly at you as a quoted reply is, it is on
-     * the screen for everybody, and the seat it is about was the only one
-     * treating it as an ordinary line of the round.
-     */
     const atYou = spoken.filter(
       (a, i) =>
         i > yoursLast &&
         a.playerId !== selfId &&
-        ((a.replyToId !== null && yours.has(a.replyToId)) ||
-          namesYou(a.text, selfName))
+        a.replyToId !== null &&
+        yours.has(a.replyToId)
     );
     const latest = atYou[atYou.length - 1];
     if (latest && Math.random() < REPLY_BACK_CHANCE) return latest.id;
@@ -427,7 +329,6 @@ export function pickReplyTarget(
     (answer, i) =>
       Math.pow(RECENCY_BIAS, i) *
       (1 + HEAT_BIAS * heat(answer)) *
-      invitesReply(answer.text, selfName) *
       (lastPartner && answer.playerId === lastPartner ? SAME_PARTNER_DAMP : 1)
   );
   const total = weights.reduce((sum, w) => sum + w, 0);

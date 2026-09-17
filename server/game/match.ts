@@ -46,7 +46,6 @@ import type { Intent } from '../../src/game/transport';
 import {
   currentTurnId,
   DEFAULT_SETTINGS,
-  playerById,
   roundAnswers,
   survivors,
   type DepartureReason,
@@ -453,13 +452,7 @@ export class Match {
 
     const windowMs = room.settings.answerSeconds * 1000;
     const openedAt = Date.now();
-    // The name too, because "red has said nothing all game" is aimed at this
-    // seat as plainly as a quoted reply is, and only the arrow used to count.
-    const replyToId = pickReplyTarget(
-      roundAnswers(room),
-      seatId,
-      playerById(room, seatId)?.name ?? null
-    );
+    const replyToId = pickReplyTarget(roundAnswers(room), seatId);
 
     const stillThisTurn = () => !this.disposed && this.seatTurnKey === turnKey;
 

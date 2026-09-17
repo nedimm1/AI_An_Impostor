@@ -57,11 +57,6 @@ export function useBotTurns(
   const round = room?.round;
   const turnIndex = room?.turnIndex;
   const turnId = room ? currentTurnId(room) : null;
-  // The seat's own name, for reading whether a line was aimed at it by name
-  // rather than by the reply arrow. Derived out here so the effect depends on
-  // a string rather than on the players array, which is a new object every
-  // time the room changes and would reschedule the turn.
-  const turnName = room?.players.find((p) => p.id === turnId)?.name ?? null;
   const isStrangersTurn = turnId !== null && turnId !== room?.youId;
   const isImpostorsTurn = turnId !== null && turnId === room?.impostorId;
   const windowMs = (room?.settings.answerSeconds ?? 0) * 1000;
@@ -81,7 +76,7 @@ export function useBotTurns(
     // Whose turn it is, not whose device this is: everybody replies from
     // their own seat, and the seat is what decides whether the last message
     // was aimed at them.
-    const replyToId = pickReplyTarget(answersRef.current, turnId, turnName);
+    const replyToId = pickReplyTarget(answersRef.current, turnId);
 
     /**
      * How long they take depends on how much they wrote, so nothing can be
@@ -145,7 +140,7 @@ export function useBotTurns(
       if (timer) clearTimeout(timer);
     };
     // round + turnIndex identify the turn, so each one is scheduled exactly once.
-  }, [phase, isStrangersTurn, isImpostorsTurn, turnId, turnName, round, turnIndex, windowMs]);
+  }, [phase, isStrangersTurn, isImpostorsTurn, turnId, round, turnIndex, windowMs]);
 }
 
 
