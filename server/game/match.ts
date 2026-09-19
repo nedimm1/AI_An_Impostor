@@ -216,6 +216,18 @@ export class Match {
   }
 
   /**
+   * Whether this person going now leaves somebody waiting on them
+   * (`penalties.ts`). Not once the match is decided, not after they were voted
+   * out — they were only watching — and not when nobody else is left in it.
+   */
+  leavingCosts(playerId: string) {
+    if (!this.has(playerId) || this.isOver()) return false;
+    const seat = playerById(this.room, this.seatOf.get(playerId));
+    if (!seat || seat.eliminated) return false;
+    return this.players().some((id) => id !== playerId);
+  }
+
+  /**
    * The room as this process holds it — impostor and all.
    *
    * NEVER SEND THIS TO A PHONE. It is the unfiltered room, which is the answer

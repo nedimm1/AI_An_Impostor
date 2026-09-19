@@ -166,9 +166,16 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
             setRoom(next);
             break;
           }
-          case 'matchmaking':
-            setMatchmaking(message.matchmaking);
+          case 'matchmaking': {
+            const matchmaking = message.matchmaking;
+            // A cooldown arrives as a duration; count it down on this phone's clock.
+            setMatchmaking(
+              matchmaking?.cooldownMs
+                ? { ...matchmaking, cooldownEndsAt: Date.now() + matchmaking.cooldownMs }
+                : matchmaking
+            );
             break;
+          }
           case 'ping': {
             socket.send(JSON.stringify({ type: 'pong' } satisfies ClientMessage));
 

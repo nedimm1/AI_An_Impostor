@@ -12,6 +12,7 @@
  */
 
 import type { Server } from 'node:http';
+import path from 'node:path';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
@@ -26,6 +27,7 @@ import { isRoomSize } from '../../src/game/types';
 
 import { Lobby } from './lobby';
 import type { ImpostorModel } from './match';
+import { Penalties } from './penalties';
 import { Logbook } from './transcript';
 
 /** A connection that has not said who it is by now is closed. */
@@ -36,6 +38,10 @@ const MAX_MESSAGE_BYTES = 16 * 1024;
 
 /** Player ids come from `Crypto.randomUUID()` on the phone. Anything else is refused. */
 const PLAYER_ID = /^[A-Za-z0-9-]{8,64}$/;
+
+/** Who has left matches early, kept across restarts (`penalties.ts`). Gitignored. */
+const PENALTIES_FILE =
+  process.env.GAME_PENALTIES_FILE ?? path.join(__dirname, '..', 'data', 'penalties.json');
 
 function parse(raw: unknown): ClientMessage | null {
   try {
@@ -85,7 +91,15 @@ export function attachGame(server: Server, model: ImpostorModel) {
       logbook.finish(match);
       playerIds.forEach(sendRoom);
     },
-  });
+    struck: (id, strike) => {
+      console.log(
+        `  game  ${id.slice(0, 8)} left early - strike ${strike.strikes}, ${Math.round(strike.cooldownMs / 60_000)} min`
+      );
+      send(id, { type: 'notice', notice: strike.cooldownMs > 0 ? 'leftEarlyCooldown' : 'leftEarlyWarning' });
+    },
+    coolingDown: (id, cooldownMs) =>
+      send(id, { type: 'matchmaking', matchmaking: { found: 0, total: 0, cooldownMs } }),
+  }, undefined, new Penalties(PENALTIES_FILE));
 
   const wss = new WebSocketServer({ server, path: GAME_PATH, maxPayload: MAX_MESSAGE_BYTES });
 

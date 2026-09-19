@@ -54,3 +54,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Who has left matches early (`server/game/penalties.ts`). Player records, not code.
+server/data/

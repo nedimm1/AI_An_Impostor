@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -28,6 +28,21 @@ export default function QueueScreen() {
     }
   }, [roomId, router]);
 
+  // Left a match early (server/game/penalties.ts): the server said wait. Count
+  // it down, and ask again the moment it is over.
+  const cooldownEndsAt = matchmaking?.cooldownEndsAt ?? null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (cooldownEndsAt === null) return;
+    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(tick);
+  }, [cooldownEndsAt]);
+  const cooldownLeft = cooldownEndsAt === null ? 0 : Math.max(0, cooldownEndsAt - now);
+  const coolingDown = cooldownLeft > 0;
+  useEffect(() => {
+    if (cooldownEndsAt !== null && !coolingDown) findMatch(roomSize);
+  }, [cooldownEndsAt, coolingDown, findMatch, roomSize]);
+
   const found = matchmaking?.found ?? 1;
   // Counted in people, not seats — the impostor's seat is never waited for.
   const total = matchmaking?.total ?? roomSize - 1;
@@ -45,28 +60,46 @@ export default function QueueScreen() {
   return (
     <Screen>
       <View style={styles.body}>
-        <View style={styles.spinnerRing}>
-          <ActivityIndicator size="large" color={Colors.accent} />
-        </View>
+        {coolingDown ? null : (
+          <View style={styles.spinnerRing}>
+            <ActivityIndicator size="large" color={Colors.accent} />
+          </View>
+        )}
 
-        <View style={styles.copy}>
-          <ThemedText type="subtitle" style={styles.centered}>
-            Searching for players…
-          </ThemedText>
-          <ThemedText type="body" themeColor="textSecondary" style={styles.centered}>
-            {found} of {total} found
-          </ThemedText>
-        </View>
+        {coolingDown ? (
+          <View style={styles.copy}>
+            <ThemedText type="subtitle" style={styles.centered}>
+              You left a match early
+            </ThemedText>
+            <ThemedText type="body" themeColor="textSecondary" style={styles.centered}>
+              You can play again in {clock(cooldownLeft)}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textMuted" style={[styles.centered, styles.note]}>
+              Other people were still playing. Finishing a match takes one of these off your record.
+            </ThemedText>
+          </View>
+        ) : (
+          <>
+            <View style={styles.copy}>
+              <ThemedText type="subtitle" style={styles.centered}>
+                Searching for players…
+              </ThemedText>
+              <ThemedText type="body" themeColor="textSecondary" style={styles.centered}>
+                {found} of {total} found
+              </ThemedText>
+            </View>
 
-        <View style={styles.seats}>
-          {Array.from({ length: total }, (_, i) => (
-            <View key={i} style={[styles.seat, i < found && styles.seatFilled]} />
-          ))}
-        </View>
+            <View style={styles.seats}>
+              {Array.from({ length: total }, (_, i) => (
+                <View key={i} style={[styles.seat, i < found && styles.seatFilled]} />
+              ))}
+            </View>
 
-        <ThemedText type="small" themeColor="textMuted" style={[styles.centered, styles.note]}>
-          You&apos;ll be dropped in with strangers. One of them won&apos;t be a person.
-        </ThemedText>
+            <ThemedText type="small" themeColor="textMuted" style={[styles.centered, styles.note]}>
+              You&apos;ll be dropped in with strangers. One of them won&apos;t be a person.
+            </ThemedText>
+          </>
+        )}
       </View>
 
       <View style={styles.footer}>
@@ -74,6 +107,12 @@ export default function QueueScreen() {
       </View>
     </Screen>
   );
+}
+
+/** 4:05, the way a countdown reads. */
+function clock(ms: number) {
+  const seconds = Math.ceil(ms / 1_000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
 const styles = StyleSheet.create({

@@ -45,14 +45,24 @@ export type Matchmaking = {
   found: number;
   /** Seats the match needs before it starts. */
   total: number;
+  /**
+   * Not seated at all: you left a match early and have to wait this long
+   * before you can queue (server/game/penalties.ts). A duration rather than a
+   * time, so a phone whose clock is off still counts down the right amount.
+   */
+  cooldownMs?: number;
+  /** The same, as a moment on this phone's clock. Set by the transport on arrival. */
+  cooldownEndsAt?: number;
 };
 
 /**
  * Something that happened to you while the app could not show it — shown once
  * you are back. `removedForBeingAway`: you were disconnected for too long
- * during a match and it carried on without you.
+ * during a match and it carried on without you. `leftEarlyWarning` and
+ * `leftEarlyCooldown`: you left a match that was still going - the first time
+ * a warning, after that a wait before you can queue (server/game/penalties.ts).
  */
-export type Notice = 'removedForBeingAway';
+export type Notice = 'removedForBeingAway' | 'leftEarlyWarning' | 'leftEarlyCooldown';
 
 export type MatchTransport = {
   /** The room as you are allowed to see it, or null when you are not in one. */

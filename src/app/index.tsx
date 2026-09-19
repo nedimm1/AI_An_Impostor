@@ -102,6 +102,22 @@ export default function HomeScreen() {
                   dismiss.
                 </ThemedText>
               </Pressable>
+            ) : notice === 'leftEarlyWarning' || notice === 'leftEarlyCooldown' ? (
+              // Said once, right after leaving, so the wait on the next search is
+              // not a surprise (server/game/penalties.ts).
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint="Dismiss"
+                onPress={dismissNotice}
+                style={({ pressed }) => [styles.notice, pressed && styles.pressed]}>
+                <ThemedText type="smallBold">You left a match early</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {notice === 'leftEarlyWarning'
+                    ? 'The others were still playing. Next time you leave early you will have to wait before joining another match.'
+                    : 'The others were still playing, so you will have to wait a little before joining another match.'}{' '}
+                  Tap to dismiss.
+                </ThemedText>
+              </Pressable>
             ) : null}
             <RoomSizePicker value={roomSize} onChange={setRoomSize} />
           </View>

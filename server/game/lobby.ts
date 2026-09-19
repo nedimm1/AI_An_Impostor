@@ -25,6 +25,7 @@ import { isRoomSize, ROOM_SIZES, type RoomSize } from '../../src/game/types';
 import type { Matchmaking } from '../../src/game/transport';
 
 import { Match, type ImpostorModel } from './match';
+import { Penalties, type Strike } from './penalties';
 
 /**
  * How long somebody can be disconnected during a match before it carries on
@@ -55,6 +56,10 @@ export type LobbyEvents = {
   leftQueue: (playerId: string) => void;
   /** A match is gone; whoever was still in it is no longer in a room. */
   matchEnded: (match: Match, playerIds: string[]) => void;
+  /** Left a match that was still going, and what it cost them (`penalties.ts`). */
+  struck?: (playerId: string, strike: Strike) => void;
+  /** Tried to queue while still waiting out a cooldown. */
+  coolingDown?: (playerId: string, cooldownMs: number) => void;
 };
 
 export class Lobby {
@@ -69,7 +74,8 @@ export class Lobby {
   constructor(
     private readonly model: ImpostorModel,
     private readonly events: LobbyEvents,
-    private readonly graceMs: number = DISCONNECT_GRACE_MS
+    private readonly graceMs: number = DISCONNECT_GRACE_MS,
+    private readonly penalties: Penalties = new Penalties()
   ) {}
 
   matchFor(playerId: string): Match | null {
@@ -93,6 +99,13 @@ export class Lobby {
     if (!isRoomSize(size)) return;
     // Already playing — the caller just re-sends the room.
     if (this.byPlayer.has(playerId)) return;
+
+    // Left a match early and still waiting it out.
+    const cooldownMs = this.penalties.cooldownLeft(playerId);
+    if (cooldownMs > 0) {
+      this.events.coolingDown?.(playerId, cooldownMs);
+      return;
+    }
 
     // Asking for a different size moves you; asking again for the same one is
     // a reconnect, and changes nothing.
@@ -122,13 +135,19 @@ export class Lobby {
     this.events.queueChanged(this.queue(size), this.progress(size));
   }
 
-  /** Walked out of their match. They are free to queue again straight away. */
+  /**
+   * Walked out of their match. Free to queue again straight away unless the
+   * match was still going and this is not their first time (`penalties.ts`).
+   */
   leaveMatch(playerId: string) {
     this.back(playerId);
     const match = this.byPlayer.get(playerId);
     if (!match) return;
+    const costs = match.leavingCosts(playerId);
+    if (match.isOver()) this.penalties.completed(playerId);
     this.byPlayer.delete(playerId);
     match.leave(playerId);
+    if (costs) this.events.struck?.(playerId, this.penalties.strike(playerId));
   }
 
   /**
@@ -154,9 +173,14 @@ export class Lobby {
         // let go of quietly — being told you were removed from a game that had
         // finished would be news about nothing.
         const wasOver = match.isOver();
+        const costs = match.leavingCosts(playerId);
         this.byPlayer.delete(playerId);
         match.removeForBeingAway(playerId);
-        if (wasOver) return;
+        if (wasOver) {
+          this.penalties.completed(playerId);
+          return;
+        }
+        if (costs) this.events.struck?.(playerId, this.penalties.strike(playerId));
         this.removed.set(
           playerId,
           setTimeout(() => this.removed.delete(playerId), REMEMBER_REMOVAL_MS)
@@ -206,6 +230,8 @@ export class Lobby {
         stillIn.forEach((id) => {
           this.byPlayer.delete(id);
           this.back(id);
+          // Stayed until the reveal: one strike forgiven.
+          if (m.isOver()) this.penalties.completed(id);
         });
         this.events.matchEnded(m, stillIn);
       }
