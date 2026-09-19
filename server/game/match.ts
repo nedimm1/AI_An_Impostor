@@ -33,10 +33,12 @@
 
 import {
   answerDelay,
-  answerDelayWithin,
+  calledOut,
   missesTurn,
   pickReplyTarget,
+  saidItWouldVote,
   voteDelay,
+  voteDelayWithin,
 } from '../../src/game/humanlike';
 import { impostorBallot, impostorTurn } from '../../src/game/impostor-payload';
 import { makeId, makeSessionId, mockAnswer } from '../../src/game/mock';
@@ -46,6 +48,7 @@ import type { Intent } from '../../src/game/transport';
 import {
   currentTurnId,
   DEFAULT_SETTINGS,
+  playerById,
   roundAnswers,
   survivors,
   type DepartureReason,
@@ -63,6 +66,19 @@ import { viewFor } from './view';
  * also has to cross the network first, so the room gives it longer.
  */
 const EXPIRY_GRACE_MS = 1_000;
+
+/**
+ * How often the impostor sits a turn out, whatever it had to say.
+ *
+ * It used to be whenever the typing delay drawn for the message ran past the
+ * clock, which scales with length: under 1% of three-word lines, but 11-14%
+ * of eleven-to-thirteen-word ones. People in the logged matches ran out of
+ * time about once in eighty lines. rm_uddixkl opened round two with its push
+ * dropped that way, and the next accusation was "he's been too quiet the
+ * entire game". So it is a flat rate now, near the room's, and a message that
+ * is sent always lands inside the window.
+ */
+const MISS_RATE = 0.015;
 
 /** Held back from the impostor's turn so its line still has time to land. See bots.ts. */
 const SEND_MARGIN_MS = 1_500;
@@ -197,6 +213,24 @@ export class Match {
   /** Decided — the reveal is up and nothing is left to play. */
   isOver() {
     return this.room.outcome !== null;
+  }
+
+  /**
+   * The room as this process holds it — impostor and all.
+   *
+   * NEVER SEND THIS TO A PHONE. It is the unfiltered room, which is the answer
+   * to the game; `view()` below is the only thing that may leave the server.
+   * This exists for the server's own record of the match (`transcript.ts`),
+   * which writes to a terminal and a file on the machine already holding the
+   * API key and deciding the outcome.
+   */
+  snapshot(): Room {
+    return this.room;
+  }
+
+  /** Whether a seat is held by a person. The rest is the impostor. */
+  isHumanSeat(seatId: string) {
+    return this.humanSeats.has(seatId);
   }
 
   /**
@@ -452,16 +486,29 @@ export class Match {
 
     const windowMs = room.settings.answerSeconds * 1000;
     const openedAt = Date.now();
-    const replyToId = pickReplyTarget(roundAnswers(room), seatId);
+    // The name too, because "red has said nothing all game" is aimed at this
+    // seat as plainly as a quoted reply is, and only the arrow used to count.
+    const replyToId = pickReplyTarget(
+      roundAnswers(room),
+      seatId,
+      playerById(room, seatId)?.name ?? null
+    );
 
     const stillThisTurn = () => !this.disposed && this.seatTurnKey === turnKey;
 
     const send = (text: string, canMiss: boolean) => {
       if (!stillThisTurn()) return;
-      const delay = canMiss ? answerDelay(text, windowMs) : answerDelayWithin(text, windowMs);
-      // Running past the clock is a thing people do; the room's own turn
-      // expiry then marks them as having run out of time.
-      if (canMiss && missesTurn(delay, windowMs)) return;
+      // Running out of time is a thing people do, at about this rate; the
+      // room's own turn expiry then marks it (`MISS_RATE`).
+      if (canMiss && Math.random() < MISS_RATE) return;
+
+      // Drawn again rather than clamped, so the long ones do not all arrive
+      // on the same second before the clock.
+      let delay = answerDelay(text, windowMs);
+      for (let tries = 0; missesTurn(delay, windowMs * 0.85) && tries < 5; tries++) {
+        delay = answerDelay(text, windowMs);
+      }
+      delay = Math.min(delay, windowMs * 0.85);
 
       this.seatTimers.push(
         setTimeout(() => {
@@ -477,8 +524,15 @@ export class Match {
     // Anything that fails or runs long falls back to a stock line, because
     // the room must never be able to tell that the model fell over.
     const deadline = Math.max(1_000, windowMs - SEND_MARGIN_MS);
+    // Missing a turn is allowed, but not the one where the room has just come
+    // at it: silence there reads as having nothing to say for yourself.
+    const canMiss = !calledOut(
+      roundAnswers(room),
+      seatId,
+      playerById(room, seatId)?.name ?? null
+    );
     withinDeadline(this.model.answer(impostorTurn(room, replyToId)), deadline).then((text) =>
-      send(text && text.trim() ? text : mockAnswer(), true)
+      send(text && text.trim() ? text : mockAnswer(), canMiss)
     );
   }
 
@@ -490,8 +544,11 @@ export class Match {
     for (const voter of survivors(opened)) {
       if (this.humanSeats.has(voter.id)) continue;
 
-      const wait = voteDelay(windowMs);
-      if (missesTurn(wait, windowMs)) continue;
+      // Allowed to sit a vote out, but not one it has told the room about.
+      const promised =
+        voter.id === opened.impostorId && saidItWouldVote(roundAnswers(opened), voter.id);
+      const wait = promised ? voteDelayWithin(windowMs) : voteDelay(windowMs);
+      if (!promised && missesTurn(wait, windowMs)) continue;
 
       let picked: string | null = null;
       if (voter.id === opened.impostorId) {

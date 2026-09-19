@@ -18,6 +18,22 @@ const {
   nearlyTheSame,
   cleanText,
   isChallenge,
+  backedBy,
+  canPass,
+  canArgue,
+  roomWordsFor,
+  matchRoom,
+  isSarcastic,
+  mentionsWhodunit,
+  pushTarget,
+  askedOf,
+  phoneCaps,
+  autocapsFor,
+  allyAgainst,
+  defendedByMe,
+  saidNotFollowing,
+  accusedByMe,
+  castVote,
   isDisagreement,
   isVoteQuestion,
   voteQuestionsTo,
@@ -25,6 +41,7 @@ const {
   readSituation,
   stanceTable,
   buildMessages,
+  STANCES_TALKING,
   coAccused,
   nameUsePolicy,
   asksTheRoom,
@@ -44,6 +61,17 @@ const {
   systemPrompt,
   swearBack,
   hasDegenerated,
+  inventsAboutThem,
+  writeAnswer,
+  quietAllMatch,
+  isAgreement,
+  isAccusation,
+  mentionsVoting,
+  TYPISTS,
+  typistFor,
+  blindSpotsFor,
+  nicheIn,
+  unseenFor,
 } = require('./impostor');
 
 const ROOM = [
@@ -283,6 +311,17 @@ describe('names in its own messages', () => {
     expect(instructions).not.toContain('Emil');
   });
 
+  // A push drawn under somebody's message goes after them, as "you" - it was
+  // told to name them and not to name them in the same paragraph.
+  it('pushes at the person it is replying to without naming them', () => {
+    const content = lastMessage(
+      { replyTo: { name: 'Emil', text: 'us version is better fight me' } },
+      { ...answerShape(true, {}), stance: 'push', stanceNote: 'x', words: [4, 7], length: 'four to seven words' }
+    );
+    expect(content).toContain('You are going after Emil');
+    expect(content.split('Your message instructions:')[1]).not.toContain('Emil');
+  });
+
   it('avoids a name when it used one in its last line', () => {
     const read = readRoom(
       [...ROOM, { name: 'AI', text: 'kofi has a point tbh' }],
@@ -317,18 +356,19 @@ describe('having a view of its own', () => {
   // replying that pineapple is not a topping — a turn in which it never said
   // what it liked. The first time round the room is for answering.
   it('answers the question on the turn everybody is answering on', () => {
-    const sample = stances({});
+    const sample = stances({ passable: true });
     expect(new Set(sample)).toEqual(new Set(['own', 'tangent', 'pass']));
     expect(sample.filter((stance) => stance === 'own').length / sample.length)
       .toBeGreaterThan(0.75);
   });
 
   /*
-   * Nobody has a view on all forty-three of them. The seat that produces a
-   * considered answer to every single question is the seat being asked to.
+   * Nobody has a nickname, a karaoke song and a party trick. The seat that
+   * produces a considered answer to every one of those is the seat being
+   * asked to. Everything else on the list has an answer - see `canPass`.
    */
   it('sometimes has no answer at all, which is a whole message', () => {
-    const sample = stances({});
+    const sample = stances({ passable: true });
     const passed = sample.filter((stance) => stance === 'pass').length / sample.length;
 
     expect(passed).toBeGreaterThan(0.03);
@@ -337,7 +377,10 @@ describe('having a view of its own', () => {
 
   it('has views once it has answered, and is not shy about them', () => {
     const sample = stances({ laterTurn: true });
-    expect(new Set(sample).size).toBe(5);
+    expect(new Set(sample)).toEqual(
+      // No `push` here: unprompted, it waits for a vote to argue from.
+      new Set(['own', 'build', 'tangent', 'agree', 'disagree', 'redirect', 'sidestep'])
+    );
     // Not the default move, but not something it talks itself out of either.
     expect(reactiveRate(sample)).toBeGreaterThan(0.3);
     expect(reactiveRate(sample)).toBeLessThan(0.55);
@@ -613,8 +656,14 @@ describe('replies', () => {
     expect(inThread()).not.toContain('Consider whether the last message');
   });
 
+  // The shape is pinned rather than drawn: the fixture room reads as talking,
+  // so an unpinned draw is an answering turn only a fifth of the time and the
+  // test failed about that often.
   it('does not point at one on the turn it is meant to be answering', () => {
-    const content = lastMessage({ turnNumber: 1 });
+    const content = lastMessage(
+      { turnNumber: 1 },
+      { ...answerShape(true, {}), answering: true, stance: 'own' }
+    );
     expect(content).not.toContain('the last message in the room');
     expect(content).toContain('it is your turn to put up yours');
   });
@@ -732,6 +781,810 @@ describe('standing by what it said', () => {
  * is the one everybody notices. So what the turn is for is read off the room
  * rather than off the turn number.
  */
+/**
+ * Quoted under somebody's answer, it has to read the line as their answer.
+ *
+ * rm_c7wm3l6: "My first car, thanks dad" was Cyan's answer to the best gift
+ * they had been given. Quoted bare and invited to ask something, it replied
+ * "that is the dream ... what did you get" - eight replays out of eight.
+ */
+describe('replying to somebody\'s answer', () => {
+  const GIFTS = [
+    { name: 'Brown', text: 'the gift of life', replyToName: null },
+    { name: 'AI', text: 'for me a kindle', replyToName: null },
+    { name: 'Cyan', text: 'My first car, thanks dad', replyToName: null },
+    { name: 'Brown', text: 'W dad', replyToName: null },
+  ];
+  const asking = {
+    length: 'eight to thirteen words',
+    words: [8, 13],
+    askQuestion: true,
+  };
+  const reply = (replyTo, lines = GIFTS) =>
+    lastMessage(
+      {
+        prompt: 'What is the best gift you have been given?',
+        roundLines: lines,
+        replyTo,
+      },
+      asking
+    );
+
+  it('says the quoted line is their answer', () => {
+    expect(reply({ name: 'Cyan', text: 'My first car, thanks dad' })).toContain(
+      'That message is their answer to the question'
+    );
+  });
+
+  it('does not invite a question under it', () => {
+    expect(reply({ name: 'Cyan', text: 'My first car, thanks dad' })).not.toContain(
+      'tiny natural question'
+    );
+  });
+
+  it('treats a later line from the same seat as conversation', () => {
+    const content = reply({ name: 'Brown', text: 'W dad' });
+    expect(content).not.toContain('their answer to the question');
+    expect(content).toContain('tiny natural question');
+  });
+
+  it('treats a line written at somebody as conversation', () => {
+    const content = reply({ name: 'Gold', text: 'Very poetic' }, [
+      ...GIFTS,
+      { name: 'Gold', text: 'Very poetic', replyToName: 'Brown' },
+    ]);
+    expect(content).not.toContain('their answer to the question');
+  });
+});
+
+/**
+ * Somebody taking its side is not something to argue with.
+ *
+ * rm_puehh: it said "my cat", Blue wrote "Me and Mr silver are team cat lol",
+ * and it answered "nah dogs are way better, cats are just too moody".
+ */
+describe('when somebody has taken its side', () => {
+  const HOME = [
+    { name: 'Olive', text: 'My dog', replyToName: null },
+    { name: 'AI', text: 'my cat', replyToName: null },
+    { name: 'Red', text: 'Which type you got', replyToName: 'Olive' },
+  ];
+  const after = (...lines) => [...HOME, ...lines];
+
+  it('reads being backed by name', () => {
+    expect(
+      backedBy(after({ name: 'Blue', text: 'Me and ai are team cat lol', replyToName: null }), 'AI')
+    ).toHaveLength(1);
+  });
+
+  it('reads being backed by the arrow', () => {
+    expect(backedBy(after({ name: 'Blue', text: 'same', replyToName: 'AI' }), 'AI')).toHaveLength(1);
+  });
+
+  it('is not backed by somebody pushing back or asking', () => {
+    expect(backedBy(after({ name: 'Red', text: 'nah cats are mid', replyToName: 'AI' }), 'AI')).toEqual([]);
+    expect(backedBy(after({ name: 'Red', text: 'what cat is it', replyToName: 'AI' }), 'AI')).toEqual([]);
+  });
+
+  it('is not backed by a line about somebody else', () => {
+    expect(backedBy(after({ name: 'Blue', text: 'team dog honestly', replyToName: null }), 'AI')).toEqual([]);
+  });
+
+  it('is not backed before it has said anything', () => {
+    expect(
+      backedBy([{ name: 'Blue', text: 'ai will say cat lol', replyToName: null }], 'AI')
+    ).toEqual([]);
+  });
+
+  it('takes disagreeing off the table', () => {
+    const keys = (over) => stanceTable(over).map((option) => option.key);
+    expect(keys({})).toContain('disagree');
+    expect(keys({ backed: true })).not.toContain('disagree');
+  });
+});
+
+/**
+ * Contractions that do not exist: "honestly’s the best feeling ever" went to
+ * the room in rm_c7wm3l6, and "always’ll be team cat" came back in a replay.
+ */
+describe('contractions it made up', () => {
+  it('opens a swallowed "it\'s" back up', () => {
+    expect(cleanText('that is the dream, honestly’s the best feeling ever')).toBe(
+      'that is the dream, honestly it’s the best feeling ever'
+    );
+  });
+
+  it('gives a contraction with no word in front its "i" back', () => {
+    expect(cleanText('burgers, probably.’ve been eating them way too often')).toBe(
+      'burgers, probably. i’ve been eating them way too often'
+    );
+    expect(cleanText('the ’90s were good')).toBe('the ’90s were good');
+  });
+
+  it('spells out a fused will', () => {
+    expect(cleanText('always’ll be team cat')).toBe('always will be team cat');
+  });
+
+  it('leaves real ones, possessives and the apostrophe style alone', () => {
+    for (const said of [
+      'i’ll go',
+      "you're wrong",
+      "they've seen it",
+      "i'm in",
+      "i'd say pizza",
+      'that’s cute',
+      "my dad's car",
+      "my cat's a menace",
+    ]) {
+      expect(cleanText(said)).toBe(said);
+    }
+  });
+});
+
+/**
+ * A joke on the screen is a joke, not a claim.
+ *
+ * rm_lb23g: "Well what do YOU eat everyday? Whale liver? Lol", then "as a
+ * matter of fact I do" - and it answered "no one actually eats that".
+ */
+describe('a joke in play', () => {
+  const WHALE = [
+    { name: 'Yellow', text: 'Pizza', replyToName: null },
+    { name: 'Orange', text: 'So generic', replyToName: 'Yellow' },
+    { name: 'AI', text: 'idk honestly', replyToName: null },
+    { name: 'Yellow', text: 'Well what do YOU eat everyday? Whale liver? Lol', replyToName: 'Orange' },
+    { name: 'Orange', text: 'as a matter of fact I do', replyToName: null },
+  ];
+  const after = (text, replyToName = null) => [
+    { name: 'Olive', text: 'pizza', replyToName: null },
+    { name: 'AI', text: 'tacos', replyToName: null },
+    { name: 'Blue', text, replyToName },
+  ];
+
+  it('finds the joke and who is playing along', () => {
+    const { bit } = readRoom(WHALE, 'AI');
+    expect(bit.name).toBe('Yellow');
+    expect(bit.along.text).toBe('as a matter of fact I do');
+  });
+
+  it('tells the model not to take it at its word', () => {
+    const note = roomNote(readRoom(WHALE, 'AI'));
+    expect(note).toContain('Yellow is joking');
+    expect(note).toContain('Orange is playing along');
+    expect(note).toContain('Do not take it at its word');
+  });
+
+  it('does not count a bare laugh as a joke', () => {
+    expect(readRoom(after('lol'), 'AI').bit).toBeNull();
+  });
+
+  it('never calls a line aimed at it a joke', () => {
+    expect(readRoom(after('tacos are for kids lol', 'AI'), 'AI').bit).toBeNull();
+    expect(readRoom(after('ai is the bot lol'), 'AI').bit).toBeNull();
+    expect(readRoom(after('Then why do you got a cat lol'), 'AI').bit).toBeNull();
+  });
+
+  it('lets it go once it has spoken since', () => {
+    expect(
+      readRoom([...WHALE, { name: 'AI', text: 'lol', replyToName: null }], 'AI').bit
+    ).toBeNull();
+  });
+
+  it('takes arguing, tangents and changing the subject off the table', () => {
+    const keys = (over) => stanceTable(over).map((option) => option.key);
+    expect(keys({})).toEqual(expect.arrayContaining(['disagree', 'tangent', 'redirect']));
+    for (const key of ['disagree', 'tangent', 'redirect']) {
+      expect(keys({ joke: true })).not.toContain(key);
+    }
+  });
+});
+
+/**
+ * "idk" is only an answer when not having one is ordinary.
+ *
+ * rm_lb23g: asked for its favourite food, it sent "idk honestly, i can never
+ * actually pick one when people ask this stuff".
+ */
+describe('passing on a question', () => {
+  const PROMPTS = require('../src/game/prompts.json');
+  const keys = (over) => stanceTable({ answering: true, ...over }).map((o) => o.key);
+
+  it('is only on the questions you can honestly not have an answer to', () => {
+    expect(canPass('What is your favorite food?')).toBe(false);
+    expect(canPass('What is the last thing you ate?')).toBe(false);
+    expect(canPass('What nickname have you been given?')).toBe(true);
+    expect(canPass('What is your go-to karaoke song?')).toBe(true);
+    // Most of the list is answerable by anybody.
+    expect(PROMPTS.filter(canPass).length).toBeLessThan(PROMPTS.length / 4);
+  });
+
+  it('is off the table on the rest', () => {
+    expect(keys({})).not.toContain('pass');
+    expect(keys({ passable: true })).toContain('pass');
+  });
+
+  it('is short when it happens', () => {
+    for (let i = 0; i < 400; i++) {
+      const shape = answerShape(false, { passable: true });
+      if (shape.stance === 'pass') expect(shape.words[1]).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it('says not having one, not being unable to pick', () => {
+    const pass = stanceTable({ answering: true, passable: true }).find((o) => o.key === 'pass');
+    expect(pass.note).toContain('never had one');
+    expect(pass.note).not.toContain('cant think of one');
+  });
+});
+
+/**
+ * The room swaps the question and it owes the new one an answer of its own.
+ *
+ * rm_rx7qk: "Forget the question, what is your guys type". It sent "bold
+ * choice lol", "yeah, definitely into that look" and "real ones know" - and
+ * never a type - while Olive asked it "What about you". Voted out 2-1.
+ */
+describe('a question the room asked itself', () => {
+  const TYPE = [
+    { name: 'Olive', text: 'Forget the question, what is your guys type', replyToName: null },
+    { name: 'Pink', text: 'I am into goth girls', replyToName: 'Olive' },
+  ];
+  const PRESSED = [
+    ...TYPE,
+    { name: 'AI', text: 'bold choice lol', replyToName: null },
+    { name: 'Olive', text: 'What about you', replyToName: 'AI' },
+  ];
+
+  it('hears a question put to everybody without a question mark', () => {
+    expect(asksTheRoom(TYPE[0])).toBe(true);
+    expect(asksTheRoom({ text: 'what do you guys think of tacos' })).toBe(true);
+    expect(asksTheRoom({ text: 'pizza, what a question' })).toBe(false);
+    expect(asksTheRoom({ text: 'doner kebab, what about everyone else' })).toBe(false);
+  });
+
+  it('is owed until it has answered, and again when somebody presses', () => {
+    expect(readRoom(TYPE, 'AI').roomQuestion.owed).toBe(true);
+    expect(readRoom(PRESSED, 'AI').roomQuestion.owed).toBe(true);
+    expect(
+      readRoom([...PRESSED, { name: 'AI', text: 'sporty girls tbh', replyToName: null }], 'AI')
+        .roomQuestion.owed
+    ).toBe(false);
+  });
+
+  it('only offers an answer of its own while it is owed', () => {
+    expect(stanceTable({ roomOwed: true }).map((o) => o.key)).toEqual(['own']);
+    expect(stanceTable({ roomOwed: true, challenged: true }).map((o) => o.key)).toContain(
+      'defend'
+    );
+  });
+
+  it('quotes the question and asks for its own answer', () => {
+    const content = lastMessage({ prompt: 'What is your favorite smell?', roundLines: TYPE });
+    expect(content).toContain('"Forget the question, what is your guys type"');
+    expect(content).toContain('Give your own answer to it');
+  });
+
+  it('leaves room for an answer under a reply', () => {
+    for (let i = 0; i < 300; i++) {
+      expect(answerShape(true, { roomOwed: true, replying: true }).words[1]).toBeGreaterThan(3);
+    }
+  });
+
+  it('does not cut an answer down to the "nah" in front of it', () => {
+    expect(
+      trimClause('nah, i like blondes more', { clause: false, list: false, words: [4, 7] })
+    ).toBe('nah, i like blondes more');
+  });
+});
+
+/**
+ * Talking at the length of the room.
+ *
+ * rm_c7wm3l6: in a room of "W dad", "Fr" and "Very poetic" it drew fourteen
+ * to twenty words. The register is the seat's own; the room pulls on top.
+ */
+describe('the length the room is typing', () => {
+  const lines = (...texts) => texts.map((text, i) => ({ name: `P${i}`, text }));
+  const long = (roomWords) => {
+    let n = 0;
+    for (let i = 0; i < 3000; i++) {
+      if (answerShape(true, { laterTurn: true, roomWords }).words[0] >= 14) n++;
+    }
+    return n / 3000;
+  };
+
+  it('reads the median of everybody else', () => {
+    expect(roomWordsFor(lines('the gift of life', 'Very poetic', 'W dad', 'Fr', 'My first car, thanks dad'), 'AI')).toBe(2);
+    expect(roomWordsFor(lines('Pizza'), 'AI')).toBeNull();
+    expect(
+      roomWordsFor([...lines('a b', 'c d'), { name: 'AI', text: 'one two three four five six seven' }], 'AI')
+    ).toBe(2);
+  });
+
+  it('makes long messages rare in a short room', () => {
+    expect(long(2)).toBeLessThan(long(null) / 2);
+  });
+
+  it('leaves a talkative room alone', () => {
+    const bands = [{ min: 8, max: 13, weight: 10 }];
+    expect(matchRoom(bands, 12)).toEqual(bands);
+  });
+
+  it('still lets a defence or a bit have its room', () => {
+    for (let i = 0; i < 200; i++) {
+      expect(answerShape(true, { roomWords: 1, inCharacter: true, needsRoom: true }).words[0]).toBeGreaterThan(7);
+    }
+  });
+});
+
+/**
+ * Nobody argues with what somebody was given. rm_c7wm3l6 replays: "nah cars
+ * are too much work", under Cyan's first car from their dad.
+ */
+describe('questions that are not for arguing with', () => {
+  it('allows it on taste and opinion, not on what happened to somebody', () => {
+    expect(canArgue('What is your favorite food?')).toBe(true);
+    expect(canArgue('What pizza topping do you actually defend?')).toBe(true);
+    expect(canArgue('What is the best gift you have been given?')).toBe(false);
+    expect(canArgue('What is the last thing you ate?')).toBe(false);
+    expect(canArgue('What is in your pockets right now?')).toBe(false);
+  });
+
+  it('lets an argument the room started itself back in', () => {
+    const cats = [
+      { name: 'Olive', text: 'My dog', replyToName: null },
+      { name: 'Blue', text: 'nah cats are better', replyToName: null },
+      { name: 'Red', text: 'no way dogs win', replyToName: null },
+    ];
+    let disagreed = 0;
+    for (let i = 0; i < 300; i++) {
+      const shape = answerShape(true, {
+        laterTurn: true,
+        arguable: canArgue("What is on your phone's home screen?") || readRoom(cats, 'AI').arguing,
+      });
+      if (shape.stance === 'disagree') disagreed++;
+    }
+    expect(disagreed).toBeGreaterThan(0);
+  });
+
+  it('takes disagreeing off the table there', () => {
+    const keys = (over) => stanceTable(over).map((o) => o.key);
+    expect(keys({})).toContain('disagree');
+    expect(keys({ arguable: false })).not.toContain('disagree');
+  });
+});
+
+// "apple, orange, maybe a grape", after it had already said cereal.
+describe('lists', () => {
+  it('are never drawn', () => {
+    for (let i = 0; i < 2000; i++) {
+      expect(answerShape(true, { laterTurn: true }).list).toBe(false);
+    }
+  });
+});
+
+/**
+ * rm_4lt7hv4: "Ur mom", "Ur girlfriend", "Wow you guys are so funny" - and it
+ * answered "toast with peanut butter, had it for breakfast earlier" as though
+ * the room were a form. No laugh anywhere, so none of it registered.
+ */
+describe('jokes and sarcasm without a laugh', () => {
+  const ROOM = [
+    { name: 'Orange', text: 'Ur mom', replyToName: null },
+    { name: 'Green', text: 'Ur girlfriend', replyToName: null },
+    { name: 'Violet', text: 'Wow you guys are so funny', replyToName: null },
+  ];
+
+  it('hears an ur-mom joke as a joke', () => {
+    expect(readRoom(ROOM.slice(0, 2), 'AI').bit.text).toBe('Ur girlfriend');
+  });
+
+  it('hears the eye-roll as sarcasm, not as playing along', () => {
+    const read = readRoom(ROOM, 'AI');
+    expect(read.sarcasm.name).toBe('Violet');
+    expect(read.bit.along).toBeNull();
+    const note = roomNote(read);
+    expect(note).toContain('Violet is being sarcastic');
+    expect(note).toContain('aimed at the jokes');
+  });
+
+  it('only calls it sarcasm when it is aimed or unmistakable', () => {
+    expect(isSarcastic('Wow you guys are so funny')).toBe(true);
+    expect(isSarcastic('very mature')).toBe(true);
+    expect(isSarcastic('so original')).toBe(true);
+    expect(isSarcastic('you guys are so funny lol')).toBe(false);
+    expect(isSarcastic('this is so funny')).toBe(false);
+    expect(isSarcastic('that film was hilarious')).toBe(false);
+  });
+
+  it('keeps long messages very rare in a two-word room', () => {
+    let long = 0;
+    for (let i = 0; i < 4000; i++) {
+      if (answerShape(true, { roomWords: 2 }).words[0] >= 8) long++;
+    }
+    expect(long / 4000).toBeLessThan(0.06);
+  });
+});
+
+/**
+ * rm_raf6gls round two: "It wasn't Mr red, who could it be", answered with
+ * "reading a book in bed"; then, between Silver and Gold accusing each other,
+ * "nah, i think it is them".
+ */
+describe('the room deciding who it is', () => {
+  const OPENER = [{ name: 'Gold', text: 'It wasn’t Mr red, who could it be', replyToName: null }];
+  const BOTH = [
+    { name: 'Silver', text: 'I think its you Mr gold, ur just agreeing with everyone', replyToName: null },
+    { name: 'Gold', text: 'I actually think its U you are the one accusing everyone', replyToName: null },
+  ];
+
+  it('hears talk about who it is without the word vote', () => {
+    expect(mentionsWhodunit('It wasn’t Mr red, who could it be')).toBe(true);
+    expect(mentionsWhodunit('who do you guys think')).toBe(true);
+    expect(mentionsWhodunit('who is your favorite singer')).toBe(false);
+    expect(mentionsWhodunit('it isn’t that deep')).toBe(false);
+    expect(readRoom(OPENER, 'AI').elsewhere).toBe(true);
+  });
+
+  it('names who it means', () => {
+    const policy = (lines) => nameUsePolicy({ read: readRoom(lines, 'AI') });
+    expect(policy(OPENER)).toBe('needed');
+    expect(policy(BOTH)).toBe('needed');
+    // Quoting somebody still means their name is already on screen.
+    expect(nameUsePolicy({ read: readRoom(BOTH, 'AI'), replyTo: BOTH[1] })).toBe('avoid');
+  });
+
+  it('knows who is out, and that they were a person', () => {
+    const content = lastMessage({
+      roundLines: OPENER,
+      stillIn: ['Silver', 'Gold', 'AI'],
+      ballots: [{ round: 1, votes: [], eliminated: 'Red', tied: null }],
+    });
+    expect(content).toContain('Voted out so far: Red');
+    expect(content).toContain('They were a person');
+    expect(content).toContain('Still in: Silver, Gold and AI');
+  });
+});
+
+/**
+ * Going after somebody: a target of its own, a reason that is theirs, and a
+ * vote that matches what it told the room.
+ */
+describe('going after somebody', () => {
+  const L = (name, text, replyToName = null) => ({ name, text, replyToName });
+  const turn = {
+    name: 'AI',
+    stillIn: ['Silver', 'Gold', 'AI'],
+    ballots: [
+      { round: 1, eliminated: 'Red', votes: [{ voter: 'Gold', target: 'Red' }, { voter: 'Silver', target: 'Red' }] },
+    ],
+    earlier: [{ round: 1, name: 'Gold', text: 'Yeah, since you’re so rich' }],
+    roundLines: [
+      L('Gold', 'It wasn’t Mr red, who could it be'),
+      L('Silver', 'I think its you gold, ur just agreeing with everyone'),
+    ],
+  };
+
+  it('goes after whoever the room already has, with what they actually did', () => {
+    const target = pushTarget(turn, readRoom(turn.roundLines, 'AI'), 'AI');
+    expect(target.name).toBe('Gold');
+    expect(target.evidence).toContain('said "It wasn’t Mr red, who could it be"');
+    expect(target.evidence).toContain('said "Yeah, since you’re so rich" in an earlier round');
+    expect(target.evidence).toContain('voted for Red in round 1');
+  });
+
+  it('sticks with the one it already accused', () => {
+    const mine = { ...turn, roundLines: [...turn.roundLines, L('AI', 'nah its silver, vote silver')] };
+    expect(pushTarget(mine, readRoom(mine.roundLines, 'AI'), 'AI').name).toBe('Silver');
+  });
+
+  it('never goes after somebody who is already out', () => {
+    const target = pushTarget(turn, readRoom(turn.roundLines, 'AI'), 'AI');
+    expect(target.name).not.toBe('Red');
+  });
+
+  it('pushes mostly when the room is on who it is, rarely otherwise', () => {
+    const rate = (over) => {
+      let n = 0;
+      for (let i = 0; i < 3000; i++) if (answerShape(true, { laterTurn: true, ...over }).stance === 'push') n++;
+      return n / 3000;
+    };
+    expect(rate({ hunting: true, suspicion: true })).toBeGreaterThan(0.2);
+    expect(rate({ roomWords: 4 })).toBeLessThan(0.15);
+    // Unprompted only once there has been a vote to argue from.
+    expect(rate({ roomWords: 4 })).toBe(0);
+    expect(rate({ roomWords: 4, afterVote: true })).toBeGreaterThan(0);
+    expect(rate({ hunting: true, challenged: true })).toBe(0);
+  });
+
+  it('leaves room for the reason', () => {
+    for (let i = 0; i < 1000; i++) {
+      const shape = answerShape(true, { laterTurn: true, hunting: true, suspicion: true });
+      if (shape.stance === 'push') expect(shape.words[1]).toBeGreaterThan(3);
+    }
+  });
+
+  it('is given the evidence and told to use it', () => {
+    const content = lastMessage(
+      { ...turn, roundLines: turn.roundLines },
+      { ...answerShape(true, {}), stance: 'push', stanceNote: 'x', words: [4, 7], length: 'four to seven words' }
+    );
+    expect(content).toContain('You are going after Gold');
+    expect(content).toContain('voted for Red in round 1');
+    expect(content).toContain('Then say you are voting Gold');
+  });
+
+  it('votes for who it accused, not for somebody it cleared', async () => {
+    expect(accusedByMe([L('AI', 'vote gold, he just agrees with everyone')], 'AI', ['Silver', 'Gold'])).toBe('Gold');
+    expect(accusedByMe([L('AI', 'nah gold is fine')], 'AI', ['Silver', 'Gold'])).toBeNull();
+    const vote = await castVote({
+      name: 'AI',
+      persona: { name: 'AI', brief: 'x', traits: [] },
+      candidates: ['Silver', 'Gold'],
+      roundLines: [L('AI', 'vote gold, he just agrees with everyone')],
+    });
+    expect(vote.name).toBe('Gold');
+  });
+});
+
+/**
+ * rm_em7vr6j. Round one: Yellow's "Why you doubting the guy so hard?" was at
+ * Cyan, and it answered it as if asked. Round two: "I think it's Mr silver"
+ * was not read as an accusation, so its defence carried the round's answer
+ * with it - "im an aries so i cant help it, tiktok for me".
+ */
+describe('who a line is actually aimed at', () => {
+  const L = (name, text, replyToName = null) => ({ name, text, replyToName });
+  const DOUBT = [
+    L('Gold', 'To my girl, we broke up'),
+    L('AI', 'a meme to my best friend'),
+    L('Gold', 'It really happened', 'Cyan'),
+    L('Cyan', 'Doubt'),
+    L('Yellow', 'Why you doubting the guy so hard?'),
+  ];
+
+  it('reads "it\'s <name>" as an accusation', () => {
+    const said = [L('Yellow', "Honestly I think it's Mr silver, what's up with him and the signs?")];
+    expect(accusationsAgainst(said, 'Mr. Silver')).toHaveLength(1);
+    expect(accusationsAgainst([L('Yellow', 'silver what is on your home screen')], 'Mr. Silver')).toHaveLength(0);
+    expect(accusationsAgainst([L('Yellow', 'its not silver lol')], 'Mr. Silver')).toHaveLength(0);
+  });
+
+  it('knows a "you" question with no arrow is for whoever spoke just before', () => {
+    expect(askedOf({ roundLines: DOUBT, replyTo: DOUBT[4] }, 'AI')).toBe('Cyan');
+    const toMe = [...DOUBT.slice(0, 2), L('Yellow', 'why a meme though?')];
+    expect(askedOf({ roundLines: toMe, replyTo: toMe[2] }, 'AI')).toBeNull();
+  });
+
+  it('does not take a question to one person for a question to the room', () => {
+    expect(asksTheRoom(DOUBT[4])).toBe(false);
+    expect(asksTheRoom(L('Yellow', 'what do you guys think of tacos'))).toBe(true);
+    expect(readRoom(DOUBT, 'AI').roomQuestion).toBeNull();
+  });
+
+  it('tells it the question was not its to answer', () => {
+    const content = lastMessage({ roundLines: DOUBT, replyTo: DOUBT[4] });
+    expect(content).toContain('That question was put to Cyan, not to you');
+  });
+});
+
+/**
+ * rm_cia0cbk: "idk dont follow marvel", then "yeah exactly, toby is the only
+ * one that actually feels like a movie" two lines later.
+ */
+describe('something it said it does not follow', () => {
+  const L = (name, text) => ({ name, text, replyToName: null });
+  const ROUND = [
+    L('Silver', 'The new Spider-Man movie, It was pretty good'),
+    L('AI', 'idk dont follow marvel'),
+    L('Silver', 'Nah tom holland is the best'),
+    L('Orange', 'Nooooooo its toby'),
+    L('Yellow', 'Tom holland is rly not that bad'),
+    L('Orange', 'toby forever'),
+  ];
+
+  it('remembers saying it', () => {
+    expect(saidNotFollowing(ROUND, 'AI')).toBe('idk dont follow marvel');
+    expect(saidNotFollowing([L('AI', 'toby is the best')], 'AI')).toBeNull();
+  });
+
+  it('mostly sidesteps, and may change the subject even mid-argument', () => {
+    const keys = stanceTable({ outOfIt: true, argument: true }).map((o) => o.key);
+    expect(keys).toContain('sidestep');
+    expect(keys).toContain('redirect');
+    const sample = Array.from(
+      { length: 2000 },
+      () => answerShape(true, { laterTurn: true, outOfIt: true, argument: true }).stance
+    );
+    expect(sample.filter((s) => s === 'sidestep').length / 2000).toBeGreaterThan(0.3);
+  });
+
+  it('can sidestep now and then on an ordinary turn, but not when a name is up', () => {
+    expect(stanceTable({}).map((o) => o.key)).toContain('sidestep');
+    expect(stanceTable({ suspicion: true }).map((o) => o.key)).not.toContain('sidestep');
+    expect(stanceTable({ challenged: true }).map((o) => o.key)).not.toContain('sidestep');
+  });
+
+  it('does not always offer the same example first', () => {
+    const firsts = new Set(
+      Array.from({ length: 50 }, () =>
+        stanceTable({}).find((o) => o.key === 'sidestep').note.match(/"([^"]+)"/)[1]
+      )
+    );
+    expect(firsts.size).toBeGreaterThan(1);
+  });
+
+  it('takes no side in the argument about it', () => {
+    const keys = stanceTable({ outOfIt: true, argument: true }).map((o) => o.key);
+    for (const key of ['agree', 'disagree', 'back']) expect(keys).not.toContain(key);
+  });
+
+  it('is reminded of what it said', () => {
+    const content = lastMessage({ roundLines: ROUND });
+    expect(content).toContain('Earlier this round you said "idk dont follow marvel"');
+  });
+});
+
+/**
+ * rm_5562udw: "bet orane is the one", then under Green's "Wdym too loud?",
+ * "just the way you type, im voting you" - at Green. "So you voting me or
+ * orange?", and it was voted out.
+ */
+describe('not switching targets', () => {
+  const L = (name, text, replyToName = null) => ({ name, text, replyToName });
+  const ROUND = [
+    L('Orange', 'Damn so it was not him, now I feel kinda bad'),
+    L('AI', 'lol true, bet orane is the one since hes too loud'),
+    L('Green', 'Wdym too loud?'),
+  ];
+  const turn = {
+    name: 'AI',
+    stillIn: ['Green', 'Orange', 'AI'],
+    ballots: [{ round: 1, eliminated: 'Brown', votes: [] }],
+    roundLines: ROUND,
+    replyTo: { name: 'Green', text: 'Wdym too loud?' },
+  };
+
+  it('knows who it accused, typo and all', () => {
+    expect(accusedByMe(ROUND, 'AI', ['Green', 'Orange'])).toBe('Orange');
+    expect(accusedByMe([L('AI', 'greenery is nice')], 'AI', ['Green', 'Orange'])).toBeNull();
+  });
+
+  it('keeps going after them under somebody else\'s message', () => {
+    expect(pushTarget(turn, readRoom(ROUND, 'AI'), 'AI').name).toBe('Orange');
+  });
+
+  it('is told who "you" is and who it is talking about', () => {
+    const content = lastMessage(turn, {
+      ...answerShape(true, {}),
+      stance: 'push',
+      stanceNote: 'x',
+      words: [4, 7],
+      length: 'four to seven words',
+    });
+    expect(content).toContain('"you" in it means Green');
+    expect(content).toContain('Orange is who you are talking about');
+  });
+
+  it('keeps the accusation on the accused whatever it draws, under the asker\'s message', () => {
+    for (const stance of ['agree', 'build', 'disagree', 'sidestep']) {
+      const content = lastMessage(turn, {
+        ...answerShape(true, {}),
+        stance,
+        stanceNote: 'x',
+        words: [4, 7],
+        length: 'four to seven words',
+      });
+      expect(content).toContain('Earlier this round you said it was Orange');
+      expect(content).toContain('"you" in it means Green');
+      expect(content.split('Your message instructions:')[1]).toContain('Name Orange');
+    }
+  });
+
+  it('hears "Wdym too loud?" as at it', () => {
+    const lines = [...ROUND, L('Orange', 'Yeah? wtf'), L('Green', 'anyway i like chess')];
+    expect(repliesTo(lines, 'AI').map((l) => l.text)).toEqual(['Wdym too loud?', 'Yeah? wtf']);
+  });
+
+  it('gives everybody\'s record when it has to name somebody', () => {
+    // An ordinary stance: a `push` brings its own single-target record instead.
+    const content = lastMessage(
+      {
+        ...turn,
+        replyTo: null,
+        roundLines: [L('Gold', 'It wasn’t Mr red, who could it be'), L('Orange', 'Yeah lol')],
+        stillIn: ['Gold', 'Orange', 'AI'],
+      },
+      { ...answerShape(true, {}), stance: 'own', stanceNote: 'x', words: [4, 7], length: 'four to seven words' }
+    );
+    expect(content).toContain('What each of them has actually done this match');
+    expect(content).toContain('Orange: said "Yeah lol"');
+  });
+
+  it('never mistypes a player\'s name', () => {
+    for (let i = 0; i < 500; i++) {
+      expect(addNaturalImperfection('bet orange is the one since hes loud', ['Mr. Orange'])).toContain('orange');
+    }
+  });
+
+  it('keeps the reason and the vote together', () => {
+    for (let i = 0; i < 500; i++) {
+      const shape = answerShape(true, { laterTurn: true, hunting: true, suspicion: true });
+      if (shape.stance === 'push') expect(shape.clause).toBe(true);
+    }
+  });
+});
+
+/**
+ * rm_uddixkl. Round two: Pink said "that just leaves u brown, ur the one who
+ * accused orange", Brown turned it on the impostor, and it only got annoyed.
+ * Round one: "too long is a stretch, lol" about Orange, then a vote for Orange.
+ */
+describe('an ally, and a vote that matches a defence', () => {
+  const L = (name, text, replyToName = null) => ({ name, text, replyToName });
+  const R2 = [
+    L('Brown', 'Damn I guess it wasn’t him'),
+    L('Pink', 'Well I guess that just leaves u brown, ur the one who accused orange'),
+    L('Brown', 'I think we should actually vote silver, he’s been too quiet the entire game'),
+  ];
+  const R1 = [
+    L('Brown', 'I think its u orange ur answers are too long'),
+    L('Silver', 'yeah exactly, we can just vote based on who is weird', 'Orange'),
+    L('Orange', 'Woah rly?! So what if my answers are too long??', 'Brown'),
+    L('Brown', 'That’s AI behaviour if u ask me'),
+    L('Silver', 'too long is a stretch, lol'),
+  ];
+
+  it('reads "leaves u brown" and "its u orange" as accusations', () => {
+    expect(accusationsAgainst(R2, 'Brown').map((l) => l.name)).toEqual(['Pink']);
+    expect(accusationsAgainst([R1[0]], 'Orange')).toHaveLength(1);
+    expect(accusationsAgainst([L('Brown', 'its u that likes orange juice')], 'Orange')).toHaveLength(0);
+  });
+
+  it('finds the ally against its accuser, and counters with their point', () => {
+    const turn = { stillIn: ['Pink', 'Brown', 'Silver'], roundLines: R2 };
+    const accusations = accusationsAgainst(R2, 'Silver');
+    expect(allyAgainst(turn, accusations, 'Silver')).toMatchObject({ accuser: 'Brown', ally: 'Pink' });
+
+    let countered = 0;
+    for (let i = 0; i < 1000; i++) {
+      if (answerShape(true, { underPressure: true, allied: true }).pushback === 'counter') countered++;
+    }
+    expect(countered / 1000).toBeGreaterThan(0.7);
+  });
+
+  it('knows who it stood up for', () => {
+    expect(defendedByMe(R1, 'Silver', ['Pink', 'Orange', 'Brown'])).toEqual(['Orange']);
+    expect(defendedByMe([L('Silver', 'pizza is fine')], 'Silver', ['Pink'])).toEqual([]);
+  });
+});
+
+/**
+ * 93% of the people's lines in the logs start with a capital - the phone does
+ * it - and none of the impostor's did.
+ */
+describe('autocorrect capitals', () => {
+  it('capitalises what the keyboard would, and nothing else', () => {
+    expect(phoneCaps('toast lol')).toBe('Toast lol');
+    expect(phoneCaps('i think its gold, he said wtf')).toBe('I think its gold, he said wtf');
+    expect(phoneCaps('idk. i dont follow marvel')).toBe('Idk. I dont follow marvel');
+    expect(phoneCaps('nah im voting orange? he said wtf')).toBe('Nah im voting orange? He said wtf');
+    expect(phoneCaps('i’m not a bot')).toBe('I’m not a bot');
+    // Names stay as typed; so does a word that only starts with an i.
+    expect(phoneCaps('its gold tbh')).toBe('Its gold tbh');
+    expect(phoneCaps('in the kitchen')).toBe('In the kitchen');
+    expect(phoneCaps('ok its in')).toBe('Ok its in');
+  });
+
+  it('is on for most matches and holds for the whole of one', () => {
+    let on = 0;
+    for (let i = 0; i < 1000; i++) if (autocapsFor(`rm_${i}`)) on++;
+    expect(on / 1000).toBeGreaterThan(0.8);
+    expect(on / 1000).toBeLessThan(0.97);
+    expect(autocapsFor('rm_same')).toBe(autocapsFor('rm_same'));
+  });
+});
+
 describe('a room that has stopped answering the question', () => {
   const persona = { name: 'AI', brief: 'x', traits: [] };
 
@@ -899,6 +1752,52 @@ describe('a room that has stopped answering the question', () => {
     expect(content).toContain('it is your turn to put up yours');
   });
 
+  /*
+   * Second in the queue is not the same turn as first in the queue.
+   *
+   * It was being told to put its answer up and nothing else, so with one
+   * person already having said pineapple it said pepperoni into the void -
+   * a line that would have read identically if the screen had been blank.
+   * People answer through what is above them: "me too lol", or theirs next
+   * to the one before it.
+   */
+  it('answers through the answers already on the screen', () => {
+    const content = lastMessage(
+      { roundLines: ANSWERING, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: true, stance: 'own' }
+    );
+    expect(content).toContain('answering after somebody, not into an empty room');
+    expect(content).toContain('me too lol');
+    // Not a verdict on theirs and then yours: "pizza is classic, burgers for
+    // me" was two messages in one.
+    expect(content).toContain('not a verdict on theirs and then yours');
+    expect(content).not.toContain(
+      "Do not spend your turn on somebody else's answer"
+    );
+  });
+
+  // And it is not a template. Every line opening "for me its" is its own
+  // pattern, and a more visible one than the thing it replaced.
+  it('does not sell those two shapes as a formula', () => {
+    const content = lastMessage(
+      { roundLines: ANSWERING, turnNumber: 1 },
+      { ...answerShape(true, {}), answering: true, stance: 'own' }
+    );
+    expect(content).toContain('Neither of those is a formula');
+  });
+
+  // First to answer has nothing to answer through, and telling it not to
+  // post over the top of a room that does not exist is how a seat ends up
+  // hedging at an empty screen.
+  it('does not tell the first speaker to read the screen', () => {
+    const content = lastMessage(
+      { roundLines: [], turnNumber: 1 },
+      { ...answerShape(false, {}), answering: true, stance: 'own' }
+    );
+    expect(content).toContain('nobody has answered it yet');
+    expect(content).not.toContain('me too lol');
+  });
+
   // Missing a turn is not the same as having answered. It had said nothing
   // at all and was being told it had already answered earlier in the round.
   it('does not tell a player who never spoke that it already answered', () => {
@@ -909,9 +1808,14 @@ describe('a room that has stopped answering the question', () => {
   it('reads its own line as having answered', () => {
     const spoken = [...ARGUING, { name: 'AI', text: 'pepperoni', replyToName: null }];
     expect(readRoom(spoken, 'AI').spokenYet).toBe(true);
-    expect(lastMessage({ roundLines: spoken, turnNumber: 2 })).toContain(
-      'already answered the question earlier'
-    );
+    // Pinned: an unpinned draw can come out `redirect`, which is a turn that
+    // deliberately does not carry on from what has been said.
+    expect(
+      lastMessage(
+        { roundLines: spoken, turnNumber: 2 },
+        { ...answerShape(true, {}), answering: false, stance: 'own' }
+      )
+    ).toContain('already answered the question earlier');
   });
 });
 
@@ -976,7 +1880,10 @@ describe('the room turning on somebody else', () => {
         () => answerShape(true, { laterTurn: true, suspicion: true, piling }).stance
       ).filter((s) => s === 'doubt').length / 2000;
 
-    expect(rate(false)).toBeGreaterThan(0.1);
+    // Was 0.1. `push` (going after somebody itself) now takes a share of the
+    // suspicion turns, deliberately - it was made more aggressive - so doubt
+    // is a smaller slice; what matters is that it stays well above piling.
+    expect(rate(false)).toBeGreaterThan(0.07);
     expect(rate(true)).toBeLessThan(0.09);
     // Never doing it at all would be its own pattern.
     expect(rate(true)).toBeGreaterThan(0.01);
@@ -988,10 +1895,13 @@ describe('the room turning on somebody else', () => {
       () => answerShape(true, { laterTurn: true, suspicion: true }).stance
     );
     const rate = (key) => sample.filter((s) => s === key).length / sample.length;
-    expect(rate('pile') + rate('doubt')).toBeGreaterThan(0.35);
-    expect(rate('pile') + rate('doubt')).toBeLessThan(0.6);
-    // Backing every accusation would be its own pattern.
-    expect(rate('doubt')).toBeGreaterThan(0.1);
+    // Going after somebody itself (`push`) counts: it is a view about who it is.
+    const view = rate('pile') + rate('doubt') + rate('push');
+    expect(view).toBeGreaterThan(0.35);
+    expect(view).toBeLessThan(0.8);
+    // Backing every accusation would be its own pattern. 0.07 rather than
+    // 0.1 since `push` took a share of these turns (see the piling test).
+    expect(rate('doubt')).toBeGreaterThan(0.07);
   });
 
   it('tells it what the turn is for, not only what it is not', () => {
@@ -1054,9 +1964,12 @@ describe('taking somebody else\'s side', () => {
   });
 
   it('is never offered on the turn it still owes an answer', () => {
-    const keys = stanceTable({ answering: true, challenged: true, argument: true }).map(
-      (o) => o.key
-    );
+    const keys = stanceTable({
+      answering: true,
+      challenged: true,
+      argument: true,
+      passable: true,
+    }).map((o) => o.key);
     expect(keys).toEqual(['own', 'tangent', 'pass']);
   });
 });
@@ -1808,6 +2721,39 @@ describe('a room that is somewhere else entirely', () => {
    * reading that as somebody changing the subject took it off answering on
    * the one turn it was supposed to be answering on.
    */
+  /*
+   * The most explicit version of changing the subject does not start with the
+   * question, and it was the one shape that did not register at all: the seat
+   * put its favourite food up underneath a question about a film.
+   */
+  it('reads a question that does not open the line', () => {
+    expect(
+      asksTheRoom({
+        text: 'forget the question, what did yall think of the new spiderman movie?',
+      })
+    ).toBe(true);
+    expect(asksTheRoom({ text: 'ok random what are yall doing this weekend?' })).toBe(true);
+    expect(asksTheRoom({ text: 'off topic but who else is tired?' })).toBe(true);
+
+    // Still needs a question in it somewhere.
+    expect(asksTheRoom({ text: 'pizza, what a question' })).toBe(false);
+    expect(asksTheRoom({ text: 'doner kebab, the garlic sauce one' })).toBe(false);
+  });
+
+  it('takes that turn away from answering the question at the top', () => {
+    const read = readRoom(
+      [
+        {
+          name: 'Mr. Blue',
+          text: 'forget the question, what did yall think of the new spiderman movie?',
+          replyToName: null,
+        },
+      ],
+      'Mr. Red'
+    );
+    expect(read.elsewhere).toBe(true);
+  });
+
   it('does not take an answer that asks back for a change of subject', () => {
     expect(asksTheRoom({ text: 'pizza, you?' })).toBe(false);
     expect(asksTheRoom({ text: 'doner kebab, what about everyone else' })).toBe(false);
@@ -1861,5 +2807,730 @@ describe('a room that is somewhere else entirely', () => {
     );
     expect(asked).toContain('asked the room something of their own');
     expect(asked).toContain('Answer what they asked');
+  });
+});
+
+
+/*
+ * Nobody has seen everything.
+ *
+ * The room lands on an anime and the seat that always has a view about it is
+ * the seat that has seen everything anybody names, which no person has.
+ */
+describe('things it does not follow', () => {
+  const asked = [
+    {
+      name: 'Nedim',
+      text: 'What did yall think of the ending to the Attack on Titan?',
+      replyToName: null,
+    },
+  ];
+
+  it('holds the same two genres all match', () => {
+    const first = blindSpotsFor('r1').map((spot) => spot.key);
+    const second = blindSpotsFor('r1').map((spot) => spot.key);
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(2);
+    expect(new Set(first).size).toBe(2);
+  });
+
+  it('gives different rooms different ones', () => {
+    const seen = new Set(
+      Array.from({ length: 30 }, (_, i) =>
+        blindSpotsFor(`room${i}`)
+          .map((spot) => spot.key)
+          .join(',')
+      )
+    );
+    expect(seen.size).toBeGreaterThan(3);
+  });
+
+  // The same show twice in one match has to get the same answer. A coin flip
+  // per turn dodges it in one message and reviews it in the next.
+  it('answers the same about the same thing all match', () => {
+    const answers = Array.from({ length: 20 }, () =>
+      JSON.stringify(unseenFor('r1', asked, 'AI'))
+    );
+    expect(new Set(answers).size).toBe(1);
+  });
+
+  // The point of the whole thing: most of the room has not seen it.
+  it('has not seen it far more often than it has', () => {
+    const out = Array.from({ length: 400 }, (_, i) =>
+      unseenFor(`room${i}`, asked, 'AI')
+    );
+    const share = out.filter(Boolean).length / out.length;
+    expect(share).toBeGreaterThan(0.5);
+    expect(share).toBeLessThan(0.85);
+  });
+
+  // And it is still a room where people talk about the things they like.
+  it('still knows some of them', () => {
+    const out = Array.from({ length: 400 }, (_, i) =>
+      unseenFor(`room${i}`, asked, 'AI')
+    );
+    expect(out.filter((one) => one === null).length).toBeGreaterThan(40);
+  });
+
+  /*
+   * A word that is also an ordinary word turns a question about lunch into
+   * "idk never watched it", which is stranger than anything this fixes.
+   */
+  it('does not fire on the questions the game actually asks', () => {
+    const prompts = require('../src/game/prompts.json');
+    expect(prompts.filter((prompt) => nicheIn(prompt))).toEqual([]);
+  });
+
+  it('does not fire on ordinary chat', () => {
+    const ordinary = [
+      'pineapple',
+      'doner kebab',
+      'i saw it last week',
+      'nah thats not it',
+      'why did yall vote me',
+      'idk you just seemed sus',
+      'the city centre one',
+    ];
+    for (const line of ordinary) {
+      expect(nicheIn(line)).toBeNull();
+    }
+  });
+
+  it('reads the thing the room is actually on', () => {
+    expect(nicheIn('the ending to Attack on Titan').key).toBe('anime');
+    expect(nicheIn('the new spiderman was mid').key).toBe('superhero');
+    expect(nicheIn('did you watch love island').key).toBe('reality');
+  });
+
+  // Its own line does not count: it is the room that put the thing up.
+  it('ignores what it said itself', () => {
+    expect(
+      unseenFor('r1', [{ name: 'AI', text: 'attack on titan is good' }], 'AI')
+    ).toBeNull();
+  });
+
+  /*
+   * Being asked why you voted somebody out is not a turn you get to sit out
+   * because an anime came up two lines above.
+   */
+  it('does not sit out a turn it is being accused on', () => {
+    const shape = answerShape(true, {
+      unseen: { kind: 'genre', label: 'anime', out: 'idk i dont watch anime' },
+      underPressure: true,
+    });
+    expect(shape.stance).not.toBe('unseen');
+  });
+
+  it('is told to say it and stop', () => {
+    const shape = answerShape(true, {
+      unseen: { kind: 'genre', label: 'anime', out: 'idk i dont watch anime' },
+    });
+    expect(shape.stance).toBe('unseen');
+    expect(shape.stanceNote).toContain('idk i dont watch anime');
+    expect(shape.stanceNote).toContain('do not ask them to explain it');
+    expect(shape.list).toBe(false);
+    expect(shape.askQuestion).toBe(false);
+    expect(shape.words[1]).toBeLessThanOrEqual(7);
+  });
+
+  it('does not also tell it to answer the question', () => {
+    const content = lastMessage(
+      {
+        roundLines: [
+          { name: 'Nedim', text: 'the attack on titan ending was rough' },
+        ],
+        turnNumber: 1,
+      },
+      answerShape(true, {
+        unseen: { kind: 'genre', label: 'anime', out: 'idk i dont watch anime' },
+      })
+    );
+    expect(content).toContain('something you have not seen');
+    expect(content).not.toContain('it is your turn to put up yours');
+  });
+
+  it('puts the two it does not follow in the system prompt', () => {
+    const spots = blindSpotsFor('r1');
+    const prompt = systemPrompt(
+      { name: 'AI', brief: 'x', traits: [] },
+      40,
+      null,
+      'AI',
+      spots
+    );
+    expect(prompt).toContain(spots[0].label);
+    expect(prompt).toContain(spots[1].label);
+    expect(prompt).toContain('idk didnt watch it');
+  });
+
+  // The niche it does know is still the niche it knows: how a thing landed,
+  // never a fact that can be looked up.
+  it('still forbids anything lookup-shaped', () => {
+    const prompt = systemPrompt(
+      { name: 'AI', brief: 'x', traits: [] },
+      40,
+      null,
+      'AI',
+      blindSpotsFor('r1')
+    );
+    expect(prompt).toContain(
+      'What you cannot be right about is anything that has to be looked up'
+    );
+    expect(prompt).toContain('what happened in a numbered episode');
+  });
+});
+
+
+/*
+ * A seat that mistypes three messages in ten, every match, is a distribution
+ * rather than a person - the same thing REGISTERS was written to fix about
+ * message length.
+ */
+describe('how badly this one types', () => {
+  it('holds still inside a match', () => {
+    expect(typistFor('r1').key).toBe(typistFor('r1').key);
+  });
+
+  it('gives different rooms different typists', () => {
+    const seen = new Set(
+      Array.from({ length: 60 }, (_, i) => typistFor(`room${i}`).key)
+    );
+    expect(seen.size).toBe(3);
+  });
+
+  // The room still averages what it averaged before; it is the spread across
+  // seats that was missing, not the level.
+  it('leaves the population rate where it was', () => {
+    const total = TYPISTS.reduce((sum, one) => sum + one.weight, 0);
+    const mean =
+      TYPISTS.reduce((sum, one) => sum + one.weight * one.rate, 0) / total;
+    expect(mean).toBeCloseTo(0.3, 3);
+  });
+
+  it('actually changes how often a seat is sloppy', () => {
+    const rate = (key) => {
+      const typist = TYPISTS.find((one) => one.key === key);
+      const draws = Array.from(
+        { length: 600 },
+        () => answerShape(true, { typist }).sloppy
+      );
+      return draws.filter(Boolean).length / draws.length;
+    };
+
+    const clean = rate('clean');
+    const messy = rate('messy');
+
+    expect(clean).toBeLessThan(0.15);
+    expect(messy).toBeGreaterThan(0.45);
+    expect(messy).toBeGreaterThan(clean * 3);
+  });
+
+  // Somebody who answers in three words is not thereby somebody who
+  // misspells them.
+  it('is drawn separately from how much it says', () => {
+    const pairs = new Set(
+      Array.from(
+        { length: 120 },
+        (_, i) => `${registerFor(`room${i}`).key}:${typistFor(`room${i}`).key}`
+      )
+    );
+    expect(pairs.size).toBeGreaterThan(5);
+  });
+
+  it('says which one it drew', () => {
+    const shape = answerShape(true, { typist: TYPISTS[0] });
+    expect(shape.typist).toBe('clean');
+  });
+});
+
+
+/*
+ * The screen only holds the round it is on. The people in front of it do not
+ * have that limit, and the impostor was the only seat starting every round
+ * from nothing.
+ */
+describe('what it remembers of earlier rounds', () => {
+  const earlier = [
+    { round: 1, name: 'Mr. Blue', text: 'pizza' },
+    { round: 1, name: 'Mr. Olive', text: 'doner kebab' },
+  ];
+
+  const messagesFor = (over = {}) =>
+    buildMessages({
+      ...turn(over),
+      persona: { name: 'AI', brief: 'x', traits: [] },
+    })
+      .map((message) => message.content)
+      .join('\n');
+
+  it('hands it what the others said before this round', () => {
+    const all = messagesFor({ earlier, ownHistory: [] });
+    expect(all).toContain('What the others said in earlier rounds');
+    expect(all).toContain('round 1, Mr. Blue: pizza');
+  });
+
+  // It is the only seat that could quote those lines, because nobody else can
+  // see them any more.
+  it('tells it that it is memory rather than a transcript', () => {
+    const all = messagesFor({ earlier, ownHistory: [] });
+    expect(all).toContain('Nobody can scroll back to those');
+    expect(all).toContain('do not repeat one word for word');
+  });
+
+  it('still carries its own lines separately', () => {
+    const all = messagesFor({ earlier, ownHistory: ['i said this'] });
+    expect(all).toContain('Your previous messages in this match were');
+    expect(all).toContain('i said this');
+    expect(all).toContain('round 1, Mr. Olive: doner kebab');
+  });
+
+  // Round one has no earlier rounds, and the block has to be absent rather
+  // than present and empty.
+  it('says nothing about memory in the first round', () => {
+    const all = messagesFor({ earlier: [], ownHistory: [] });
+    expect(all).not.toContain('earlier rounds');
+  });
+
+  it('remembers a bounded amount of it', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      round: 1,
+      name: 'Mr. Blue',
+      text: `line ${i}`,
+    }));
+    const all = messagesFor({ earlier: many, ownHistory: [] });
+    expect(all).toContain('line 29');
+    expect(all).not.toContain('line 5,');
+  });
+});
+
+
+/*
+ * It can follow a change of subject now. The seat that never once makes one
+ * is the most reliably on-topic player in the room, which is its own shape.
+ */
+describe('changing the subject itself', () => {
+  const quiet = {
+    answering: false,
+    argument: false,
+    challenged: false,
+    replying: false,
+    suspicion: false,
+    unanswered: false,
+    shallow: false,
+  };
+
+  const offers = (over = {}) =>
+    stanceTable({ ...quiet, ...over }).some((one) => one.key === 'redirect');
+
+  it('is on the table in a room with nothing going on', () => {
+    expect(offers()).toBe(true);
+  });
+
+  it('is a small share of those turns', () => {
+    const pool = stanceTable(quiet);
+    const total = pool.reduce((sum, one) => sum + one.weight, 0);
+    const redirect = pool.find((one) => one.key === 'redirect');
+    expect(redirect.weight / total).toBeLessThan(0.08);
+  });
+
+  /*
+   * Changing the subject while a name is in the frame is the move of a player
+   * who wants the subject changed, and this room votes on exactly that.
+   */
+  it('is off the table while somebody is under suspicion', () => {
+    expect(offers({ suspicion: true })).toBe(false);
+  });
+
+  it('is off the table mid-argument, mid-reply and while it owes an answer', () => {
+    expect(offers({ argument: true })).toBe(false);
+    expect(offers({ replying: true })).toBe(false);
+    expect(offers({ challenged: true })).toBe(false);
+    expect(offers({ unanswered: true })).toBe(false);
+  });
+
+  // Three lines in there is nothing to change the subject away from.
+  it('is off the table in a room that has barely started', () => {
+    expect(offers({ shallow: true })).toBe(false);
+  });
+
+  it('never fires on the turn everybody is answering', () => {
+    expect(offers({ answering: true })).toBe(false);
+  });
+
+  // The system prompt bans dropping a title nobody mentioned, and this is the
+  // one stance that could walk around it.
+  it('does not let it pick a topic it can be knowledgeable about', () => {
+    const note = stanceTable(quiet).find((one) => one.key === 'redirect').note;
+    expect(note).toContain('Not a title');
+    expect(note).toContain('something everybody in the room can answer');
+  });
+});
+
+
+/*
+ * A turn that runs out draws a bubble under that seat's name saying "ran out
+ * of time". Everybody sees it. The payload filtered those lines out, so the
+ * impostor was the one seat in the room that could not.
+ */
+describe('turns that produced nothing', () => {
+  const said = (over) =>
+    buildMessages({
+      ...turn(over),
+      persona: { name: 'AI', brief: 'x', traits: [] },
+    })
+      .map((message) => message.content)
+      .join('\n');
+
+  it('is told who sat their turn out', () => {
+    const all = said({
+      roundLines: [{ name: 'Mr. Blue', text: 'pizza', replyToName: null }],
+      silent: [{ name: 'Mr. Pink', lostConnection: false }],
+    });
+    expect(all).toContain('Mr. Pink ran out of time and sent nothing');
+    expect(all).toContain('The room watched that happen');
+  });
+
+  // Running out of time and dropping out are different things to have
+  // happened to somebody, and the room is shown which.
+  it('tells the two apart', () => {
+    const all = said({
+      roundLines: [],
+      silent: [{ name: 'Mr. Olive', lostConnection: true }],
+    });
+    expect(all).toContain('Mr. Olive lost connection before finishing');
+    expect(all).not.toContain('Mr. Olive ran out of time');
+  });
+
+  it('does not report its own missed turn back to it', () => {
+    const all = said({
+      roundLines: [],
+      silent: [{ name: 'AI', lostConnection: false }],
+    });
+    expect(all).not.toContain('AI ran out of time');
+  });
+
+  it('says nothing at all when everybody answered', () => {
+    const all = said({
+      roundLines: [{ name: 'Mr. Blue', text: 'pizza', replyToName: null }],
+      silent: [],
+    });
+    expect(all).not.toContain('ran out of time');
+  });
+});
+
+
+/*
+ * The markers are how the room is read, and a phrasing they miss is a thing
+ * that did not happen as far as the impostor is concerned.
+ */
+describe('reading what the room actually types', () => {
+  it('reads an accusation that never says bot', () => {
+    for (const line of [
+      'no human types like that',
+      'somethings off about that answer',
+      'that reads like chatgpt',
+      'my money is on olive',
+      'pink hasnt said anything all game',
+      'it was written by something',
+    ]) {
+      expect(isAccusation(line)).toBe(true);
+    }
+  });
+
+  // It is told to say "fax" itself in the agree stance, and could not
+  // recognise it coming back the other way.
+  it('reads the agreement it is itself told to type', () => {
+    for (const line of ['fax', 'facts', 'fr', 'ong', '+1', 'no cap']) {
+      expect(isAgreement(line)).toBe(true);
+    }
+  });
+
+  /*
+   * Ordinary words on their own and ordinary words in a sentence are not the
+   * same thing. "bet" is agreement; "i had a bet on the game" is an answer.
+   */
+  it('only takes the ordinary ones as the whole message', () => {
+    expect(isAgreement('bet')).toBe(true);
+    expect(isAgreement('real')).toBe(true);
+    expect(isAgreement('i had a bet on the game')).toBe(false);
+    expect(isAgreement('real madrid were awful')).toBe(false);
+  });
+
+  it('reads a vote that does not use the word', () => {
+    expect(mentionsVoting('locking in blue')).toBe(true);
+  });
+
+  // The questions the game asks, and ordinary answers to them, are not
+  // accusations. A false positive here puts the seat into a defence nobody
+  // started.
+  it('does not read an accusation into ordinary chat', () => {
+    const ordinary = [
+      ...require('../src/game/prompts.json'),
+      'pizza',
+      'doner kebab',
+      'green tea',
+      'my nan makes the best one',
+      'toast with way too much butter',
+      'nothing much, just working a couple of shifts',
+    ];
+    expect(ordinary.filter((line) => isAccusation(line))).toEqual([]);
+  });
+});
+
+
+/*
+ * "pink has said like two words all game" is the shape that accusation takes
+ * in a real room, and the impostor could neither make it nor see it coming.
+ */
+describe('who the room has been looking past all match', () => {
+  const chatty = [
+    { round: 1, name: 'Mr. Blue', text: 'pizza easily' },
+    { round: 1, name: 'Mr. Blue', text: 'no way is that better' },
+    { round: 1, name: 'Mr. Olive', text: 'doner kebab' },
+    { round: 1, name: 'Mr. Olive', text: 'garlic sauce makes it' },
+    { round: 1, name: 'Mr. Olive', text: 'you cant be serious' },
+    { round: 1, name: 'Mr. Pink', text: 'idk' },
+  ];
+  const thisRound = [
+    { name: 'Mr. Blue', text: 'crisps' },
+    { name: 'Mr. Olive', text: 'toast' },
+    { name: 'Mr. Olive', text: 'with jam yeah' },
+  ];
+
+  it('reads across the rounds, not just this one', () => {
+    expect(quietAllMatch({ earlier: chatty, roundLines: thisRound }, 'Mr. Red')).toEqual([
+      'Mr. Pink',
+    ]);
+  });
+
+  /*
+   * The same trap the round-level read has a guard for. Early on, the seat
+   * with the fewest lines is the seat whose turn has not come round twice,
+   * and handing that to a player about to point at somebody is worse than
+   * saying nothing.
+   */
+  it('says nothing until there is enough of a match to judge', () => {
+    expect(quietAllMatch({ earlier: [], roundLines: thisRound }, 'Mr. Red')).toEqual([]);
+  });
+
+  it('says nothing when everybody has spoken about as much', () => {
+    const even = [
+      { round: 1, name: 'Mr. Blue', text: 'a' },
+      { round: 1, name: 'Mr. Blue', text: 'b' },
+      { round: 1, name: 'Mr. Olive', text: 'c' },
+      { round: 1, name: 'Mr. Olive', text: 'd' },
+      { round: 1, name: 'Mr. Pink', text: 'e' },
+      { round: 1, name: 'Mr. Pink', text: 'f' },
+      { round: 1, name: 'Mr. Blue', text: 'g' },
+      { round: 1, name: 'Mr. Olive', text: 'h' },
+    ];
+    expect(quietAllMatch({ earlier: even, roundLines: [] }, 'Mr. Red')).toEqual([]);
+  });
+
+  it('never counts its own lines against anybody', () => {
+    const mine = [...chatty, { round: 1, name: 'Mr. Red', text: 'only me' }];
+    expect(quietAllMatch({ earlier: mine, roundLines: thisRound }, 'Mr. Red')).not.toContain(
+      'Mr. Red'
+    );
+  });
+
+  // Both notes are true at once when somebody has been quiet throughout, and
+  // printing them together is the same observation twice.
+  it('says the match version rather than the round one', () => {
+    const note = roomNote(
+      { lines: 9, quiet: ['Mr. Pink'], joking: false, swearing: false, arguing: false, suspects: [], piling: false },
+      false,
+      ['Mr. Pink']
+    );
+    expect(note).toContain('all game');
+    // The round-level sentence, not the words "this round" — the match note
+    // contrasts the two on purpose ("not this round, the whole match").
+    expect(note).not.toContain('has hardly said anything this round');
+  });
+
+  it('falls back to the round when the match has nothing to say', () => {
+    const note = roomNote(
+      { lines: 9, quiet: ['Mr. Pink'], joking: false, swearing: false, arguing: false, suspects: [], piling: false },
+      false,
+      []
+    );
+    expect(note).toContain('this round');
+  });
+
+  /*
+   * A reason the room will accept. "You have been quiet this round" is one
+   * somebody will point out is two messages old.
+   */
+  it('is the name it turns on when it is cornered', () => {
+    const turn = { earlier: chatty, roundLines: thisRound, stillIn: ['Mr. Blue', 'Mr. Olive', 'Mr. Pink'] };
+    const read = { quiet: [], names: ['Mr. Blue', 'Mr. Olive', 'Mr. Pink'], suspects: [] };
+    const picked = Array.from({ length: 200 }, () =>
+      pickCounterTarget(turn, read, [], 'Mr. Red')
+    ).filter(Boolean);
+
+    expect(picked.some((one) => one.name === 'Mr. Pink')).toBe(true);
+    expect(
+      picked.find((one) => one.name === 'Mr. Pink').why
+    ).toContain('whole match');
+  });
+});
+
+
+/*
+ * Reported from a real room: a player said they did not like dogs and
+ * preferred cats, and the answer came back "nah, dogs are way better, you
+ * just have a bad one". Nobody had said anything about owning a dog.
+ */
+describe('making things up about the people in the room', () => {
+  it('catches a claim about what they have been through', () => {
+    for (const line of [
+      'nah dogs are way better, you just have a bad one',
+      'nah you just havent met the right dog yet lol',
+      'you just havent had good calamari',
+      'youve clearly never tried it properly',
+      'you must have had a bad one',
+      'your dog must be badly trained',
+      'yours is probably badly trained',
+    ]) {
+      expect(inventsAboutThem(line)).toBe(true);
+    }
+  });
+
+  /*
+   * Narrow on purpose. The room is full of sentences about "you" and almost
+   * all of them are ordinary - disagreeing with somebody is not inventing
+   * anything about them, and a message that got caught here would be sent
+   * back for a rewrite it did not need.
+   */
+  it('leaves ordinary disagreement alone', () => {
+    for (const line of [
+      'nah dogs better',
+      'you wrong',
+      "youre wrong, dogs are better",
+      'how can you not like dogs they are literally the best',
+      'you dont like dogs?',
+      'you said pizza earlier though',
+      'youre missing out honestly',
+      'have you seen it?',
+      'you have to watch tv, some shows lately are better than books',
+    ]) {
+      expect(inventsAboutThem(line)).toBe(false);
+    }
+  });
+
+  // The move it should reach for instead: its own side, which nobody can
+  // correct and which is what the rest of the room is doing anyway.
+  it('leaves its own side of it alone', () => {
+    for (const line of [
+      'nah seafood is the best, i love calamari and prawns',
+      'i could never have a cat',
+      'reading is too much effort for me',
+      'i had a bad one once tbh',
+    ]) {
+      expect(inventsAboutThem(line)).toBe(false);
+    }
+  });
+
+  it('tells the model so in the standing rules', () => {
+    const prompt = systemPrompt(
+      { name: 'AI', brief: 'x', traits: [] },
+      40,
+      null,
+      'AI',
+      blindSpotsFor('r1')
+    );
+    expect(prompt).toContain(
+      'What you know about the people in this room is what they have typed in it'
+    );
+    expect(prompt).toContain('you just have a bad one');
+  });
+
+  it('says it again on the draw it actually happens on', () => {
+    const note = stanceTable({ laterTurn: true }).find(
+      (one) => one.key === 'disagree'
+    ).note;
+    expect(note).toContain('Never a claim about them');
+  });
+
+  /*
+   * The flag travels with the answer so a round log can show it. Read off the
+   * one path that returns without calling the model, because nothing in this
+   * suite has a way to stand in for OpenRouter.
+   */
+  it('reports whether it had to be asked again', async () => {
+    const mashing = ['asdkjhasd', 'aslkdjhalskjd', 'askjdhaksjd', 'alskdjhalksjd'].map(
+      (text, i) => ({ name: `Mr. ${i}`, text, replyToName: null })
+    );
+    const result = await writeAnswer({
+      roomId: 'r1',
+      persona: { name: 'AI', brief: 'x', traits: [] },
+      prompt: 'What is your favorite food?',
+      answerSeconds: 40,
+      roundLines: mashing,
+      ownHistory: [],
+    });
+    expect(result.shape.invented).toBe(false);
+  });
+});
+
+/**
+ * Not arguing against yourself.
+ *
+ * From a real match (`server/logs/`). It said "my cat", drew `disagree` two
+ * turns later into a room of dog people, and wrote "nah dogs are way better,
+ * cats are just too moody lol" — against the cat it had claimed to own one
+ * minute earlier. Mr. Red: "Then why do you got a cat lol". Mr. Blue: "Yeah,
+ * why does you got a cat when you like dogs". Both walked out.
+ *
+ * The consistency block existed the whole time. It was fed `ownHistory`, which
+ * is previous rounds only, so the round it was standing in was the one round
+ * it could not see itself in.
+ */
+describe('what it has already said this round', () => {
+  const me = { name: 'AI', brief: 'x', traits: [] };
+
+  const messages = (roundLines, ownHistory = []) =>
+    buildMessages({
+      ...turn({ roundLines, ownHistory }),
+      persona: me,
+    })
+      .map((message) => message.content)
+      .join('\n');
+
+  it('is in front of it when it writes', () => {
+    const said = messages([
+      { name: 'Mr. Olive', text: 'My dog', replyToName: null },
+      { name: 'AI', text: 'my cat', replyToName: null },
+      { name: 'Mr. Olive', text: 'Dogs better than cats', replyToName: null },
+    ]);
+
+    expect(said).toContain('my cat');
+    // Not merely present in the transcript — carried as a thing it said.
+    expect(said).toMatch(/- my cat/);
+  });
+
+  it('comes after the rounds the room can no longer see', () => {
+    const said = messages(
+      [{ name: 'AI', text: 'my cat', replyToName: null }],
+      ['pepperoni, obviously']
+    );
+
+    // Oldest first, so the last entry is the most recent thing it said.
+    expect(said.indexOf('pepperoni, obviously')).toBeLessThan(said.indexOf('my cat'));
+  });
+
+  it('does not mistake somebody else for itself', () => {
+    const said = messages([
+      { name: 'Mr. Blue', text: 'Me and Mr silver are team cat lol', replyToName: null },
+    ]);
+
+    expect(said).not.toMatch(/- Me and Mr silver are team cat lol/);
+  });
+
+  it('tells it that disagreeing never means disagreeing with itself', () => {
+    const disagree = STANCES_TALKING.find((option) => option.key === 'disagree');
+    expect(disagree.note).toMatch(
+      /[Nn]ever disagree with something you yourself have already said/
+    );
   });
 });

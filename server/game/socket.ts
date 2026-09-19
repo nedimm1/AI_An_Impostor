@@ -26,6 +26,7 @@ import { isRoomSize } from '../../src/game/types';
 
 import { Lobby } from './lobby';
 import type { ImpostorModel } from './match';
+import { Logbook } from './transcript';
 
 /** A connection that has not said who it is by now is closed. */
 const HELLO_TIMEOUT_MS = 5_000;
@@ -63,12 +64,27 @@ export function attachGame(server: Server, model: ImpostorModel) {
     });
   };
 
+  /*
+   * The server's own record of every match (`transcript.ts`). Driven from the
+   * lobby's events rather than from inside the match, so the match stays a
+   * thing that can be run in a test with nothing attached to it — and read
+   * before the phones are sent anything, so a line is in the terminal by the
+   * time it is on a screen.
+   */
+  const logbook = new Logbook();
+
   const lobby = new Lobby(model, {
-    matchChanged: (match) => match.players().forEach(sendRoom),
+    matchChanged: (match) => {
+      logbook.sync(match);
+      match.players().forEach(sendRoom);
+    },
     queueChanged: (waiting, progress) =>
       waiting.forEach((id) => send(id, { type: 'matchmaking', matchmaking: progress })),
     leftQueue: (id) => send(id, { type: 'matchmaking', matchmaking: null }),
-    matchEnded: (_match, playerIds) => playerIds.forEach(sendRoom),
+    matchEnded: (match, playerIds) => {
+      logbook.finish(match);
+      playerIds.forEach(sendRoom);
+    },
   });
 
   const wss = new WebSocketServer({ server, path: GAME_PATH, maxPayload: MAX_MESSAGE_BYTES });

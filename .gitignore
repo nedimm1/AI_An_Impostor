@@ -39,6 +39,13 @@ yarn-error.*
 .env.*
 !.env.example
 
+# match transcripts
+#
+# The game server writes what people typed in every online match to
+# `server/logs/` as one file per match (see `server/game/transcript.ts`). It is a local
+# debugging aid and never belongs in the history.
+server/logs/
+
 # typescript
 *.tsbuildinfo
 
