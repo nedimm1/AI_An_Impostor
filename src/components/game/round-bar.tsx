@@ -7,11 +7,11 @@ import { formatClock } from '@/hooks/use-countdown';
 
 type RoundBarProps = {
   round: number;
-  /** Which turn of the tiebreaker this is, 1-based. Only read in a tiebreaker. */
-  turn: number;
-  /** How many turns the tiebreaker has. Only read in a tiebreaker. */
-  turnsEach: number;
-  /** True while the room is talking out a tied vote. */
+  /**
+   * True while the room is talking out a tied vote. The card then drops its
+   * label and `prompt` is who it is between - the turn strip counts the turns,
+   * the same as in a round.
+   */
   tiebreaker?: boolean;
   prompt: string;
   /** Seconds left in the current turn, or null when nobody is on the clock. */
@@ -56,8 +56,6 @@ const SIDE = 64;
  */
 export function RoundBar({
   round,
-  turn,
-  turnsEach,
   tiebreaker,
   prompt,
   remaining,
@@ -81,7 +79,7 @@ export function RoundBar({
           <ThemedText
             type="smallBold"
             style={[styles.roundText, tiebreaker && { color: Colors.warning }]}>
-            {tiebreaker ? `Tiebreaker · ${turn} of ${turnsEach}` : `Round ${round}`}
+            {tiebreaker ? 'Tiebreaker' : `Round ${round}`}
           </ThemedText>
         </View>
 
@@ -102,11 +100,11 @@ export function RoundBar({
       </View>
 
       <View style={[styles.card, tiebreaker && styles.cardTiebreaker]}>
-        <ThemedText
-          type="label"
-          style={[styles.cardLabel, tiebreaker && { color: Colors.warning }]}>
-          Conversation starter
-        </ThemedText>
+        {tiebreaker ? null : (
+          <ThemedText type="label" style={styles.cardLabel}>
+            Conversation starter
+          </ThemedText>
+        )}
         <ThemedText type="subtitle" style={styles.prompt}>
           {prompt}
         </ThemedText>

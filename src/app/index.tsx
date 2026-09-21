@@ -33,8 +33,8 @@ export default function HomeScreen() {
   return (
     <Screen>
       <View style={styles.body}>
-        {/* The two ways off this screen that are not playing. They float in the
-          corners, over the logo's empty corners rather than in a row of their
+        {/* The one way off this screen that is not playing. It floats in the
+          corner, over the logo's own empty corner rather than in a row of its
           own, so the logo can sit right up at the top. */}
         <View style={styles.topBar}>
           <CornerLink
@@ -44,15 +44,6 @@ export default function HomeScreen() {
               ios: 'questionmark',
               android: 'question_mark',
               web: 'question_mark',
-            }}
-          />
-          <CornerLink
-            href="/settings"
-            label="Settings"
-            symbol={{
-              ios: 'gearshape.fill',
-              android: 'settings',
-              web: 'settings',
             }}
           />
         </View>
@@ -134,7 +125,7 @@ function CornerLink({
   label,
   symbol,
 }: {
-  href: '/how-to-play' | '/settings';
+  href: '/how-to-play';
   label: string;
   symbol: SymbolViewProps['name'];
 }) {

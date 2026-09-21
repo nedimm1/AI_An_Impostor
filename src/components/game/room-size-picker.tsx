@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, { LinearTransition, ZoomIn, ZoomOut } from 'react-native-reanimated';
+import Animated, {
+  LinearTransition,
+  useReducedMotion,
+  ZoomIn,
+  ZoomOut,
+} from 'react-native-reanimated';
 
 import { FigureDisc, PORTRAIT, ROBOT_GROUND } from '@/components/game/figure-disc';
 import { ThemedText } from '@/components/themed-text';
@@ -42,8 +47,28 @@ const LINEUP_TINTS = ['Blue', 'Yellow', 'Green', 'Pink'].map(
  * not fit across the card — on a small phone they shrink rather than overflow.
  */
 const MAX_FACE = 60;
+/**
+ * The smallest a face is allowed to get. Only a backstop: it catches a layout
+ * pass that reports a width too small to divide — Android fires one with a
+ * width of zero often enough that an unguarded `(0 - gaps) / seats` was the
+ * one way this row could come out negative, which Yoga reads as "no size" and
+ * draws as nothing at all.
+ */
+const MIN_FACE = 24;
 const FACE_GAP = Spacing.two;
 const MOST_SEATS = Math.max(...ROOM_SIZES);
+
+/**
+ * How far the segment labels are allowed to follow the system font size.
+ *
+ * The three of them share one row and each gets a third of it, so a long label
+ * has nowhere to go: past about 1.3x "5 players" wraps, and a wrapped segment
+ * is twice as tall with `Radius.pill` still on it, which draws the selected
+ * one as a lopsided oval rather than a pill. The row is a compact control and
+ * the spoken label below carries the same words at full size, so holding the
+ * drawn text here costs a reader nothing.
+ */
+const SEGMENT_MAX_SCALE = 1.3;
 
 type Seat = { key: string; tint: string; robot: boolean };
 
@@ -74,6 +99,7 @@ export function RoomSizePicker({
   // Every room has exactly one impostor; everyone else, you included, is a person.
   const humans = value - 1;
   const [face, setFace] = useState(MAX_FACE);
+  const reduceMotion = useReducedMotion();
 
   return (
     <View style={styles.card}>
@@ -91,15 +117,33 @@ export function RoomSizePicker({
         accessible={false}
         importantForAccessibility="no-hide-descendants"
         onLayout={(e) => {
-          const fits = (e.nativeEvent.layout.width - FACE_GAP * (MOST_SEATS - 1)) / MOST_SEATS;
-          setFace(Math.min(MAX_FACE, Math.floor(fits)));
+          const { width } = e.nativeEvent.layout;
+          // A zero-width pass measures nothing; taking it would size the row
+          // off a number that is not the row's width yet.
+          if (width <= 0) return;
+          const fits = (width - FACE_GAP * (MOST_SEATS - 1)) / MOST_SEATS;
+          setFace(Math.max(MIN_FACE, Math.min(MAX_FACE, Math.floor(fits))));
         }}>
         {lineup(value).map((seat) => (
           <Animated.View
             key={seat.key}
-            entering={ZoomIn.duration(220)}
-            exiting={ZoomOut.duration(160)}
-            layout={LinearTransition.duration(220)}>
+            /*
+              The seats zoom in, zoom out and slide to their new places — but
+              only where the device intends to finish the job.
+
+              With "Animator duration scale" off (Developer Options, and set
+              that way on plenty of real phones) these never ran to completion
+              and left a seat at the opacity, scale and position it started
+              from: a seat missing from the row, a disc with no portrait in it,
+              the whole lineup piled up at one end. Reanimated reads that same
+              switch as reduced motion, so asking it here is asking exactly the
+              question that was being got wrong — and the answer, no animation
+              at all, is also what someone who turned the switch on was asking
+              for. Off, the row is plain and therefore correct; on, it moves.
+            */
+            entering={reduceMotion ? undefined : ZoomIn.duration(220)}
+            exiting={reduceMotion ? undefined : ZoomOut.duration(160)}
+            layout={reduceMotion ? undefined : LinearTransition.duration(220)}>
             {seat.robot ? (
               <FigureDisc art={PORTRAIT.robot} color={seat.tint} size={face} ring={Colors.accent} />
             ) : (
@@ -130,6 +174,8 @@ export function RoomSizePicker({
               ]}>
               <ThemedText
                 type="smallBold"
+                numberOfLines={1}
+                maxFontSizeMultiplier={SEGMENT_MAX_SCALE}
                 style={selected ? styles.segmentTextSelected : styles.segmentText}>
                 {size} players
               </ThemedText>
@@ -192,8 +238,10 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     color: Colors.textMuted,
+    textAlign: 'center',
   },
   segmentTextSelected: {
     color: Colors.text,
+    textAlign: 'center',
   },
 });

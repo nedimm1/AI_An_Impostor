@@ -35,7 +35,7 @@ const STEPS = [
   },
   {
     title: 'A tie means a tiebreaker',
-    body: `If the vote ties, the whole room talks it out. The players it tied on go first and get ${tiebreakerTurnsAccused} messages each; everyone else gets ${tiebreakerTurns}. Then the room votes again. It is usually one of them, but the ballot stays open — if you think they are both innocent you can still name somebody else. Tie again and nobody goes out — and a round nobody used is a round the impostor survived.`,
+    body: `If the vote ties between two players, the whole room talks it out. The players it tied on go first and get ${tiebreakerTurnsAccused} messages each; everyone else gets ${tiebreakerTurns}. Then the room votes again. It is usually one of them, but the ballot stays open — if you think they are both innocent you can still name somebody else. Tie again, or tie between more than two, and nobody goes out — and a round nobody used is a round the impostor survived.`,
   },
   {
     title: 'It runs until someone wins',

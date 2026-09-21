@@ -23,7 +23,7 @@ import type { Player } from '@/game/types';
  * next" are completely different states and the sentence rendered them
  * identically.
  *
- * ONE LAP AT A TIME. Everybody speaks `turnsEach` times, so the full order is
+ * ONE LAP AT A TIME. Everybody speaks several times, so the full order is
  * fifteen entries and the first version drew all of them, scrolling. That read
  * as one long belt that never ended, and the moment a lap finished was
  * invisible inside it — the strip just kept sliding. It shows a single lap now
@@ -43,24 +43,42 @@ type TurnStripProps = {
   /** Index into `turnOrder` of the seat on the clock. */
   turnIndex: number;
   players: Player[];
-  /**
-   * How many times each seat speaks, which is what makes a lap. Omitted in a
-   * tiebreaker, where the order is not a rotation — the accused speak more
-   * often than everybody else — so there are no laps to count.
-   */
-  turnsEach?: number;
-  /** Seats a tied vote put up, lit with the warning colour like the vote strip. */
-  accused?: string[] | null;
+  /** Seats a tied vote put up. Drawn like everybody else, with "tied" underneath. */
+  tied?: string[] | null;
 };
+
+/**
+ * The order cut into laps: a lap ends where a seat would speak twice.
+ *
+ * That is the one definition that fits both kinds of order. A round is the
+ * same rotation `turnsEach` times over, and cuts into equal laps. A tiebreaker
+ * is not quite a rotation - the two it is between get a turn more than
+ * everybody else, so its last lap is just them - and cutting by `turnsEach`
+ * could not draw it at all. A walkout pulls every one of a player's turns out,
+ * which leaves the laps shorter but still whole.
+ */
+function lapsOf(turnOrder: string[]) {
+  const laps: string[][] = [];
+  let lap: string[] = [];
+  for (const id of turnOrder) {
+    if (lap.includes(id)) {
+      laps.push(lap);
+      lap = [];
+    }
+    lap.push(id);
+  }
+  if (lap.length) laps.push(lap);
+  return laps;
+}
 
 function Seat({
   player,
   state,
-  accused,
+  tied,
 }: {
   player: Player;
   state: 'spent' | 'now' | 'waiting';
-  accused: boolean;
+  tied: boolean;
 }) {
   const now = state === 'now';
   const grow = useSharedValue(now ? 1 : 0);
@@ -75,7 +93,7 @@ function Seat({
     transform: [{ scale: 1 + grow.value * (CURRENT / WAITING - 1) }],
   }));
 
-  const lit = accused ? Colors.warning : player.tint || Colors.accent;
+  const lit = player.tint || Colors.accent;
 
   return (
     <View style={styles.slot}>
@@ -115,6 +133,14 @@ function Seat({
             ? 'You'
             : seatShortName(player.name)}
       </ThemedText>
+
+      {tied ? (
+        <View style={styles.tiedTag}>
+          <ThemedText type="label" style={styles.tiedText}>
+            Tied
+          </ThemedText>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -123,23 +149,20 @@ export function TurnStrip({
   turnOrder,
   turnIndex,
   players,
-  turnsEach,
-  accused,
+  tied,
 }: TurnStripProps) {
-  /*
-   * Seats in one lap. A walkout pulls every one of that player's turns out of
-   * the order, so it goes from `alive * turnsEach` to `(alive - 1) * turnsEach`
-   * and stays whole laps — but the check is here anyway, because drawing a lap
-   * that does not divide would slice the order at the wrong place and the
-   * strip would quietly lie about who is next.
-   */
-  const laps = turnsEach ?? 0;
-  const perLap =
-    laps > 0 && turnOrder.length % laps === 0 ? turnOrder.length / laps : 0;
+  const all = lapsOf(turnOrder);
+  const laps = all.length;
 
-  const lap = perLap > 0 ? Math.floor(turnIndex / perLap) : 0;
-  const seats = perLap > 0 ? turnOrder.slice(lap * perLap, (lap + 1) * perLap) : turnOrder;
-  const here = perLap > 0 ? turnIndex - lap * perLap : turnIndex;
+  // Which lap the seat on the clock is in, and where in it. Past the end once
+  // the last turn is spoken, so the last lap stays up with everybody spent.
+  let lap = 0;
+  let here = turnIndex;
+  while (lap < laps - 1 && here >= all[lap].length) {
+    here -= all[lap].length;
+    lap++;
+  }
+  const seats = all[lap] ?? [];
 
   return (
     <View style={styles.rail}>
@@ -153,7 +176,7 @@ export function TurnStrip({
               key={`${id}-${i}`}
               player={player}
               state={i === here ? 'now' : i < here ? 'spent' : 'waiting'}
-              accused={accused?.includes(player.id) ?? false}
+              tied={tied?.includes(player.id) ?? false}
             />
           );
         })}
@@ -233,6 +256,16 @@ const styles = StyleSheet.create({
   },
   nameSpent: {
     opacity: 0.5,
+  },
+  tiedTag: {
+    paddingHorizontal: 5,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.warning + '22',
+  },
+  tiedText: {
+    fontSize: 8,
+    lineHeight: 11,
+    color: Colors.warning,
   },
   /** Which time round the room this is. */
   laps: {

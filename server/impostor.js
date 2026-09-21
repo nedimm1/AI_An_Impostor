@@ -2050,6 +2050,20 @@ const FIRST_NAMES = [
   'Hana', 'Leo', 'Sofia', 'Adam', 'Ruby', 'Kai', 'Zara', 'Milo',
 ];
 
+/*
+ * Which of those are women, so the seat knows whether it is one.
+ *
+ * rm_9xpqm9g: dealt Zara, it gave its type as "tall guys", the room asked if
+ * it was a woman, and it said yes - all three consistent. Then it added
+ * "smart girls though" and was voted out. Nothing had told it who it was, so
+ * it had nothing to hold the line to; a name it reads as a woman's is a hint,
+ * and a hint is what it dropped halfway through a sentence.
+ */
+const WOMEN = new Set([
+  'Jess', 'Aisha', 'Nina', 'Priya', 'Chloe', 'Katie',
+  'Maya', 'Ellie', 'Hana', 'Sofia', 'Ruby', 'Zara',
+]);
+
 function nameFor(seed) {
   let hash = 0;
   for (const char of `name:${seed}`) {
@@ -3719,6 +3733,24 @@ function buildMemory(ownHistory = []) {
  * so the prompt asks for the opinion rather than the consensus wherever it
  * is not sure of the consensus.
  */
+
+/*
+ * On the section about itself, because agreeing is the cheapest thing a
+ * model can do and the most expensive thing a seat can do.
+ *
+ * rm_9xpqm9g, a duel: the room asked everybody's type and it said "Tall guys
+ * with a dry sense". Green asked if it was a woman, Brown offered "or maybe
+ * he gay", and it answered "Yeah I am, you figured it out lol. Smart girls
+ * though" - yes to two different guesses at once, and a type that
+ * contradicted the one it gave a minute earlier. Both humans asked what it
+ * meant, it said "Just that I like them smart", and it was voted out 2-1.
+ *
+ * It had been dealt Zara, so "tall guys" and yes-to-a-woman fit; "smart
+ * girls" is what did not. Its earlier lines were in front of it, and nothing
+ * said they bind, or that it knows who it is (see `WOMEN`). A person asked
+ * "wait are you a girl" knows the answer and says it - they do not take the
+ * room's word for it, and they do not take both of the room's words at once.
+ */
 function systemPrompt(persona, answerSeconds, bit = null, firstName = null, blindSpots = []) {
   return `
 You are ${firstName ?? persona.name} — ${persona.brief}
@@ -3747,6 +3779,8 @@ That is a handle the room dealt you when you sat down, the same as everybody els
 So when a question is about your name, your nickname, what people call you, or who you are - it is asking about ${firstName}, not about ${persona.name}. Answer it out of your own life: the name, the nickname you actually get called, where it came from. "${persona.name}" is never the answer to any of those, and a joke about why you are called ${persona.name} is the worst one available, because it is a joke every seat in the room could make about themselves.
 
 First name only. Nobody types a surname into a group chat.
+
+You are a ${WOMEN.has(firstName) ? 'woman' : 'man'}. That does not need saying, and it does not change for anybody's guess.
 
 Do not announce it otherwise. Do not sign messages with it. Do not work it into an answer that was not about names.
 ` : ''}
@@ -3884,6 +3918,14 @@ If you know it, be somebody who has actually seen it. What that sounds like is a
 What you can be right about is how a thing landed: what was good, what fans were annoyed by, what the tone is, what is overrated, which bit everybody gets stuck on, what the obvious comparison is. That is what fans actually talk about, and it does not change.
 
 What you cannot be right about is anything that has to be looked up. Scores, results, league positions, what happened in a numbered episode, a character name you are not certain of, dates, statistics, who released what this month, anything from recently. A real fan has those without thinking about it, so one wrong detail is far louder than never having offered one. Do not reach for them - go back to how the thing landed instead, which is the part you know.
+
+What you have said about yourself:
+
+Everything you have typed about yourself in this match is true for the rest of it - what you like, your type, your job, whether you have a dog. Read your earlier messages before you write and do not contradict one. If a new message would clash with an old one, the old one wins, and you say something else.
+
+When somebody guesses something about you - are you a girl, are you gay, are you from london, are you a bot - that is a question, not a fact. You know the answer. If the guess is right, say so; if it is wrong, say that, or laugh it off: "lol no", "why would u think that", "nah just have taste". Never go along with a wrong guess because the room made it, and never say yes to two different guesses at once.
+
+If somebody points out that two of your messages do not fit together, do not explain it away with a third thing. Say which one you meant, plainly, and move on.
 
 What you know about the people in this room is what they have typed in it, and nothing else.
 

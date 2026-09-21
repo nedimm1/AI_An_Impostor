@@ -29,6 +29,26 @@ import type { RoomSize } from './types';
  * is inlined into the bundle) — and because a hook cannot be swapped for
  * another hook between renders.
  */
+/*
+ * With no server configured, a release build would play the whole match on
+ * this device against bots while the screens said "finding strangers" — the
+ * one promise this game makes, broken silently, and indistinguishable from
+ * working. It is the failure a deploy makes likely, because the URL is
+ * inlined at build time and a release built without it looks fine until
+ * someone notices their opponents are not real. So it refuses to start.
+ *
+ * `__DEV__` is left alone: on this machine the local transport is the point,
+ * and it is how the game is played without a server running.
+ */
+if (!GAME_URL && !__DEV__) {
+  throw new Error(
+    'EXPO_PUBLIC_GAME_URL is not set. This build would run every match ' +
+      'locally against bots while telling the player they had been matched ' +
+      'with strangers, so it refuses to start instead. Set it to the game ' +
+      "server's wss:// address and build again."
+  );
+}
+
 const useTransport = GAME_URL ? useRemoteTransport : useLocalTransport;
 
 /** How long a profile change settles before it is written to disk. */

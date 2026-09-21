@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "An_Impostor",
+    "name": "AI: An Impostor",
     "slug": "An_Impostor",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,7 +9,9 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0A0B0F",
     "ios": {
-      "icon": "./assets/images/icon.png"
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.animpostor.game",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +19,9 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.animpostor.game",
+      "versionCode": 1
     },
     "web": {
       "output": "static",

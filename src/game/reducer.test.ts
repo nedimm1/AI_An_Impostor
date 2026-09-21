@@ -319,6 +319,27 @@ describe('the ballot', () => {
   });
 });
 
+describe('seating', () => {
+  it('puts the AI anywhere in the turn order, not at the end', () => {
+    // Online the AI is passed last among the strangers, after the people.
+    const humans = ['h_0', 'h_1', 'h_2', 'h_3'];
+    const seen = new Set<number>();
+    for (let n = 0; n < 200; n++) {
+      const r = room(
+        roomReducer(null, {
+          type: 'startMatch',
+          id: `rm_${n}`,
+          yourId: humans[0],
+          strangers: [...strangers('1', '2', '3'), ...strangers('ai')],
+          humanIds: [humans[0], 'p_1', 'p_2', 'p_3'],
+        })
+      );
+      seen.add(r.turnOrder.indexOf(r.impostorId!));
+    }
+    expect([...seen].sort()).toEqual([0, 1, 2, 3, 4]);
+  });
+});
+
 describe('ties', () => {
   /** Two votes each for two people, with the fifth abstaining. */
   function tiedBallot(state: Room | null): Room | null {
@@ -393,6 +414,29 @@ describe('ties', () => {
     expect(room(left).pendingTiebreaker).toBeNull();
     expect(room(left).phase).toBe('verdict');
     expect(room(left).eliminatedId).toBeNull();
+  });
+
+  it('votes nobody out when more than two tie', () => {
+    const voting = answerEveryTurn(seated());
+    const alive = survivors(room(voting)).map((p) => p.id);
+    const third = alive.find((id) => id !== 'p_mara' && id !== 'p_deniz')!;
+    const split = play(
+      voting,
+      { type: 'castVote', voterId: alive[0], targetId: 'p_mara' },
+      { type: 'castVote', voterId: alive[1], targetId: 'p_deniz' },
+      { type: 'castVote', voterId: alive[2], targetId: third },
+      { type: 'castVote', voterId: alive[3], targetId: null },
+      { type: 'castVote', voterId: alive[4], targetId: null }
+    );
+
+    expect(room(split).phase).toBe('verdict');
+    expect(room(split).pendingTiebreaker).toBeNull();
+    expect(room(split).eliminatedId).toBeNull();
+    expect(survivors(room(split))).toHaveLength(5);
+    // Straight on to the next round, with no tiebreaker in between.
+    const next = play(split, { type: 'nextRound' });
+    expect(room(next).tiebreaker).toBeNull();
+    expect(room(next).round).toBe(room(split).round + 1);
   });
 });
 

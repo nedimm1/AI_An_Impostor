@@ -111,9 +111,21 @@ function matchedRoom(
     eliminated: false,
   };
 
-  // Your seat is random so you aren't always the first name in the room.
-  const seated = [...strangers];
-  seated.splice(Math.floor(Math.random() * (seated.length + 1)), 0, you);
+  /*
+   * Every seat is shuffled, not just yours. It used to drop you in at random
+   * among the strangers in the order they came - and online that order is the
+   * other people first and the AI last, so the AI spoke last or second to last
+   * almost every match. Where somebody sits in the turn order is a tell like
+   * anything else.
+   *
+   * Front to back, so a `Math.random` pinned at 0 leaves the order as passed -
+   * which is what the tests pin it for.
+   */
+  const seated = [you, ...strangers];
+  for (let i = 0; i < seated.length - 1; i++) {
+    const j = i + Math.floor(Math.random() * (seated.length - i));
+    [seated[i], seated[j]] = [seated[j], seated[i]];
+  }
 
   /*
    * Everybody is named here, in one pass, including you.
@@ -249,9 +261,9 @@ function outcomeFor(room: Room, eliminatedId: string | null): Outcome | null {
 }
 
 /**
- * Closes the ballot and works out what the room decided. A first tie reopens
- * the room to talk it out instead; a tie inside a tiebreaker removes nobody and
- * the round is simply spent.
+ * Closes the ballot and works out what the room decided. A first tie between
+ * two reopens the room to talk it out instead; a tie between three or more, or
+ * a tie inside a tiebreaker, removes nobody and the round is simply spent.
  */
 function resolveBallot(room: Room): Room {
   const result = voteResult(room);
@@ -274,8 +286,12 @@ function resolveBallot(room: Room): Room {
    * the one moment in the round where the room most needs telling. So the tie
    * gets the same verdict beat every other outcome gets, and the tiebreaker
    * starts when that beat ends.
+   *
+   * Only ever between two. A three-way tie is a room with no idea, not a room
+   * split between two ideas, and a tiebreaker "between" three of five seats
+   * is most of the room defending itself - so nobody is voted out instead.
    */
-  if (result.kind === 'tied' && !room.tiebreaker) {
+  if (result.kind === 'tied' && result.playerIds.length === 2 && !room.tiebreaker) {
     return {
       ...room,
       phase: 'verdict',

@@ -24,7 +24,6 @@ import { TEST_MODE } from '@/game/testing';
 import {
   answerById,
   currentTurnId,
-  currentTurnNumber,
   isYourTurn,
   playerById,
   roundAnswers,
@@ -211,14 +210,10 @@ export default function RoundScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <RoundBar
           round={room.round}
-          turn={
-            inTiebreaker
-              ? Math.min(room.turnIndex + 1, room.turnOrder.length)
-              : currentTurnNumber(room)
-          }
-          turnsEach={inTiebreaker ? room.turnOrder.length : room.settings.turnsEach}
           tiebreaker={inTiebreaker}
-          prompt={room.prompt}
+          // The room's prompt in a tiebreaker also tells everybody to say their
+          // piece; the board only needs who it is between.
+          prompt={inTiebreaker && accusationHeld ? `It is between ${accusedNames}` : room.prompt}
           remaining={remaining}
           duration={room.settings.answerSeconds}
           status={status}
@@ -242,8 +237,7 @@ export default function RoundScreen() {
                 turnOrder={room.turnOrder}
                 turnIndex={room.turnIndex}
                 players={room.players}
-                turnsEach={inTiebreaker ? undefined : room.settings.turnsEach}
-                accused={room.tiebreaker}
+                tied={room.tiebreaker}
               />
             ) : null
           }

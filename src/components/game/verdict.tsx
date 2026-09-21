@@ -141,14 +141,14 @@ export function VerdictHero({ room }: { room: Room }) {
     label = 'Nobody out';
     headline = (
       <ThemedText type="title" style={styles.centered}>
-        {nobodyVoted ? 'Nobody voted' : 'Nobody is out'}
+        {nobodyVoted ? 'Nobody voted' : 'Nobody was voted out'}
       </ThemedText>
     );
     detail = nobodyVoted
       ? 'The ballot closed empty. The round is spent and everyone stays in.'
       : room.tiebreaker
         ? 'The tiebreaker was tied too. The round is spent and everyone stays in.'
-        : 'The vote was split with nobody ahead, so everyone stays in.';
+        : 'More than two tied, so there is nobody to go between. The round is spent and everyone stays in.';
   }
 
   const t = TONES[tone];
