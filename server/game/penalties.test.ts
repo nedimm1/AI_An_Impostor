@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { Matchmaking } from '../../src/game/transport';
-import { currentTurnId, type Room } from '../../src/game/types';
+import type { Matchmaking } from '../rules/transport';
+import { currentTurnId, type Room } from '../rules/types';
 
 import { Lobby, type LobbyEvents } from './lobby';
 import type { ImpostorModel, Match } from './match';

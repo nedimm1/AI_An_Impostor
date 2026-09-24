@@ -28,7 +28,7 @@
  * durable player id is ever put in a room.
  */
 
-import type { Room } from '../../src/game/types';
+import type { Room } from '../rules/types';
 
 export function viewFor(
   room: Room,

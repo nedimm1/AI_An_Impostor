@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { currentTurnId, type Room } from '../../src/game/types';
+import { currentTurnId, type Room } from '../rules/types';
 
 import { Lobby, type LobbyEvents } from './lobby';
 import type { Match, ImpostorModel } from './match';

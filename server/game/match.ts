@@ -39,12 +39,12 @@ import {
   saidItWouldVote,
   voteDelay,
   voteDelayWithin,
-} from '../../src/game/humanlike';
-import { impostorBallot, impostorTurn } from '../../src/game/impostor-payload';
-import { makeId, makeSessionId, mockAnswer } from '../../src/game/mock';
-import { roomReducer, type MatchAction } from '../../src/game/reducer';
-import { momentOf } from '../../src/game/protocol';
-import type { Intent } from '../../src/game/transport';
+} from '../rules/humanlike';
+import { impostorBallot, impostorTurn } from '../rules/impostor-payload';
+import { makeId, makeSessionId, mockAnswer } from '../rules/mock';
+import { roomReducer, type MatchAction } from '../rules/reducer';
+import { momentOf } from '../rules/protocol';
+import type { Intent } from '../rules/transport';
 import {
   currentTurnId,
   DEFAULT_SETTINGS,
@@ -54,7 +54,7 @@ import {
   type DepartureReason,
   type Player,
   type Room,
-} from '../../src/game/types';
+} from '../rules/types';
 
 import { viewFor } from './view';
 

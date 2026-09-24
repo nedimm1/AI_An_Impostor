@@ -4,8 +4,8 @@
  * screen happens to draw.
  */
 
-import { roomReducer, type MatchAction } from '../../src/game/reducer';
-import { currentTurnId, survivors, type Player, type Room } from '../../src/game/types';
+import { roomReducer, type MatchAction } from '../rules/reducer';
+import { currentTurnId, survivors, type Player, type Room } from '../rules/types';
 
 import { Match, type ImpostorModel } from './match';
 import { viewFor } from './view';

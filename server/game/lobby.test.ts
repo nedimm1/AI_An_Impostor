@@ -2,8 +2,8 @@
  * The queue's rules, one at a time, on a fake clock.
  */
 
-import type { Matchmaking } from '../../src/game/transport';
-import type { RoomSize } from '../../src/game/types';
+import type { Matchmaking } from '../rules/transport';
+import type { RoomSize } from '../rules/types';
 
 import { Lobby, type LobbyEvents } from './lobby';
 import type { ImpostorModel, Match } from './match';

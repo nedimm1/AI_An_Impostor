@@ -21,8 +21,8 @@
  * waiting on a share of them.
  */
 
-import { isRoomSize, ROOM_SIZES, type RoomSize } from '../../src/game/types';
-import type { Matchmaking } from '../../src/game/transport';
+import { isRoomSize, ROOM_SIZES, type RoomSize } from '../rules/types';
+import type { Matchmaking } from '../rules/transport';
 
 import { Match, type ImpostorModel } from './match';
 import { Penalties, type Strike } from './penalties';

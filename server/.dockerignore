@@ -1,0 +1,11 @@
+# Never. The key goes in as an environment variable at run time, not baked
+# into a layer where `docker history` can read it back out.
+.env
+.env.*
+
+node_modules
+logs
+*.test.js
+*.test.ts
+Dockerfile
+docker-compose.yml

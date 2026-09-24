@@ -22,8 +22,8 @@ import {
   SILENCE_LIMIT_MS,
   type ClientMessage,
   type ServerMessage,
-} from '../../src/game/protocol';
-import { isRoomSize } from '../../src/game/types';
+} from '../rules/protocol';
+import { isRoomSize } from '../rules/types';
 
 import { Lobby } from './lobby';
 import type { ImpostorModel } from './match';

@@ -127,11 +127,7 @@ function Seat({
           player.awayUntil ? styles.nameAway : now ? { color: lit } : styles.nameIdle,
           state === 'spent' && styles.nameSpent,
         ]}>
-        {player.awayUntil
-          ? 'reconnecting…'
-          : player.isYou
-            ? 'You'
-            : seatShortName(player.name)}
+        {player.awayUntil ? 'reconnecting…' : player.isYou ? 'You' : seatShortName(player.name)}
       </ThemedText>
 
       {tied ? (
@@ -145,12 +141,7 @@ function Seat({
   );
 }
 
-export function TurnStrip({
-  turnOrder,
-  turnIndex,
-  players,
-  tied,
-}: TurnStripProps) {
+export function TurnStrip({ turnOrder, turnIndex, players, tied }: TurnStripProps) {
   const all = lapsOf(turnOrder);
   const laps = all.length;
 
@@ -163,23 +154,32 @@ export function TurnStrip({
     lap++;
   }
   const seats = all[lap] ?? [];
+  // A tiebreaker's last lap is only the two it is between, having the last word.
+  const closing = lap > 0 && seats.length > 0 && seats.every((id) => tied?.includes(id));
 
   return (
     <View style={styles.rail}>
-      <View style={styles.seats}>
-        {seats.map((id, i) => {
-          const player = players.find((p) => p.id === id);
-          if (!player) return null;
+      <View style={styles.lap}>
+        {closing ? (
+          <ThemedText type="label" style={styles.closing}>
+            Closing statements
+          </ThemedText>
+        ) : null}
+        <View style={styles.seats}>
+          {seats.map((id, i) => {
+            const player = players.find((p) => p.id === id);
+            if (!player) return null;
 
-          return (
-            <Seat
-              key={`${id}-${i}`}
-              player={player}
-              state={i === here ? 'now' : i < here ? 'spent' : 'waiting'}
-              tied={tied?.includes(player.id) ?? false}
-            />
-          );
-        })}
+            return (
+              <Seat
+                key={`${id}-${i}`}
+                player={player}
+                state={i === here ? 'now' : i < here ? 'spent' : 'waiting'}
+                tied={tied?.includes(player.id) ?? false}
+              />
+            );
+          })}
+        </View>
       </View>
 
       {laps > 1 ? (
@@ -228,9 +228,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.one,
   },
+  lap: {
+    flex: 1,
+    gap: Spacing.half,
+  },
+  closing: {
+    textAlign: 'center',
+    fontSize: 9,
+    lineHeight: 11,
+    color: Colors.warning,
+  },
   /** One lap, spread across whatever width there is. No scrolling: a lap fits. */
   seats: {
-    flex: 1,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',

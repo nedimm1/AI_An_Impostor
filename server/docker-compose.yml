@@ -1,23 +1,25 @@
 # The impostor proxy in a container.
 #
-#   docker compose up --build
+#   cd server && docker compose up -d --build
 #
-# It reads the same `.env` the local run does, so there is one place the key
-# lives and no second copy to drift. Everything else has a default that matches
+# It reads the `.env` one folder up — the same one the local run uses — so
+# there is one place the key lives and no second copy to drift. Everything else has a default that matches
 # what `npm run impostor:server` would give you.
+
+name: an-impostor
 
 services:
   impostor:
     build:
       context: .
-      dockerfile: server/Dockerfile
+      dockerfile: Dockerfile
     container_name: an-impostor-server
 
     # The whole file, so OPENROUTER_MODEL and the routing variables come along
     # with the key rather than having to be listed twice. The EXPO_PUBLIC_*
     # entries in there are ignored by the server — they are the app's.
     env_file:
-      - .env
+      - ../.env
 
     environment:
       # Named explicitly so the container has a port even with no .env at all,
@@ -27,7 +29,17 @@ services:
     ports:
       # Host 8787 is what the Android emulator already reaches through
       # `adb reverse tcp:8787 tcp:8787`, so nothing on the app side changes.
-      - "${IMPOSTOR_PORT:-8787}:8787"
+      # Loopback only: the public way in is the Cloudflare tunnel (cloudflared
+      # runs with host networking), so nobody can reach the server — and spend
+      # the OpenRouter key — by going round it to the machine's IP.
+      - "127.0.0.1:${IMPOSTOR_PORT:-8787}:8787"
+
+    # Match logs and the penalty box live on the host, so they survive a
+    # rebuild — and so the `node` user can write them at all, since the image's
+    # /app/server belongs to root.
+    volumes:
+      - ./logs:/app/server/logs
+      - ./data:/app/server/data
 
     # The server prints a session cost report on SIGTERM, so give it a moment
     # to do that rather than killing it at the default 10s.

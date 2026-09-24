@@ -986,7 +986,7 @@ describe('a joke in play', () => {
  * actually pick one when people ask this stuff".
  */
 describe('passing on a question', () => {
-  const PROMPTS = require('../src/game/prompts.json');
+  const PROMPTS = require('./rules/prompts.json');
   const keys = (over) => stanceTable({ answering: true, ...over }).map((o) => o.key);
 
   it('is only on the questions you can honestly not have an answer to', () => {
@@ -2877,7 +2877,7 @@ describe('things it does not follow', () => {
    * "idk never watched it", which is stranger than anything this fixes.
    */
   it('does not fire on the questions the game actually asks', () => {
-    const prompts = require('../src/game/prompts.json');
+    const prompts = require('./rules/prompts.json');
     expect(prompts.filter((prompt) => nicheIn(prompt))).toEqual([]);
   });
 
@@ -3265,7 +3265,7 @@ describe('reading what the room actually types', () => {
   // started.
   it('does not read an accusation into ordinary chat', () => {
     const ordinary = [
-      ...require('../src/game/prompts.json'),
+      ...require('./rules/prompts.json'),
       'pizza',
       'doner kebab',
       'green tea',

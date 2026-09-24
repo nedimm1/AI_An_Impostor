@@ -3,8 +3,8 @@
  * things a phone held while it was away.
  */
 
-import { momentOf } from '../../src/game/protocol';
-import { currentTurnId } from '../../src/game/types';
+import { momentOf } from '../rules/protocol';
+import { currentTurnId } from '../rules/types';
 
 import { Lobby, type LobbyEvents } from './lobby';
 import { Match, type ImpostorModel } from './match';

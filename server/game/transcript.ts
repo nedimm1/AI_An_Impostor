@@ -37,7 +37,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { playerById, type Answer, type Ballot, type Room } from '../../src/game/types';
+import { playerById, type Answer, type Ballot, type Room } from '../rules/types';
 
 import type { Match } from './match';
 
