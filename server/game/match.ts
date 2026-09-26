@@ -232,17 +232,9 @@ export class Match {
    *
    * NEVER SEND THIS TO A PHONE. It is the unfiltered room, which is the answer
    * to the game; `view()` below is the only thing that may leave the server.
-   * This exists for the server's own record of the match (`transcript.ts`),
-   * which writes to a terminal and a file on the machine already holding the
-   * API key and deciding the outcome.
    */
   snapshot(): Room {
     return this.room;
-  }
-
-  /** Whether a seat is held by a person. The rest is the impostor. */
-  isHumanSeat(seatId: string) {
-    return this.humanSeats.has(seatId);
   }
 
   /**

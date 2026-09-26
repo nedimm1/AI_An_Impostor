@@ -28,7 +28,6 @@ import { isRoomSize } from '../rules/types';
 import { Lobby } from './lobby';
 import type { ImpostorModel } from './match';
 import { Penalties } from './penalties';
-import { Logbook } from './transcript';
 
 /** A connection that has not said who it is by now is closed. */
 const HELLO_TIMEOUT_MS = 5_000;
@@ -70,27 +69,12 @@ export function attachGame(server: Server, model: ImpostorModel) {
     });
   };
 
-  /*
-   * The server's own record of every match (`transcript.ts`). Driven from the
-   * lobby's events rather than from inside the match, so the match stays a
-   * thing that can be run in a test with nothing attached to it — and read
-   * before the phones are sent anything, so a line is in the terminal by the
-   * time it is on a screen.
-   */
-  const logbook = new Logbook();
-
   const lobby = new Lobby(model, {
-    matchChanged: (match) => {
-      logbook.sync(match);
-      match.players().forEach(sendRoom);
-    },
+    matchChanged: (match) => match.players().forEach(sendRoom),
     queueChanged: (waiting, progress) =>
       waiting.forEach((id) => send(id, { type: 'matchmaking', matchmaking: progress })),
     leftQueue: (id) => send(id, { type: 'matchmaking', matchmaking: null }),
-    matchEnded: (match, playerIds) => {
-      logbook.finish(match);
-      playerIds.forEach(sendRoom);
-    },
+    matchEnded: (_match, playerIds) => playerIds.forEach(sendRoom),
     struck: (id, strike) => {
       console.log(
         `  game  ${id.slice(0, 8)} left early - strike ${strike.strikes}, ${Math.round(strike.cooldownMs / 60_000)} min`

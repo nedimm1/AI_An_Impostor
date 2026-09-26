@@ -34,11 +34,10 @@ services:
       # the OpenRouter key — by going round it to the machine's IP.
       - "127.0.0.1:${IMPOSTOR_PORT:-8787}:8787"
 
-    # Match logs and the penalty box live on the host, so they survive a
-    # rebuild — and so the `node` user can write them at all, since the image's
-    # /app/server belongs to root.
+    # The penalty box lives on the host, so it survives a rebuild — and so the
+    # `node` user can write it at all, since the image's /app/server belongs to
+    # root.
     volumes:
-      - ./logs:/app/server/logs
       - ./data:/app/server/data
 
     # The server prints a session cost report on SIGTERM, so give it a moment

@@ -247,11 +247,9 @@ if (process.env.EXPO_PUBLIC_TEST_MODE) {
 }
 
 const { attachGame } = require('./game/socket');
-const { noteImpostorCall, transcriptPath } = require('./game/transcript');
 
 attachGame(server, {
   async answer(turn) {
-    const started = Date.now();
     try {
       const result = await writeAnswer(turn);
       totals.calls += 1;
@@ -260,36 +258,10 @@ attachGame(server, {
       totals.cached += result.usage.cache_read_input_tokens ?? 0;
       totals.output += result.usage.output_tokens ?? 0;
       totals.cost += result.usage.cost ?? 0;
-
-      /*
-       * Not printed here any more.
-       *
-       * The model answers well before the line is sent — it then waits out a
-       * typing delay, so printing at the call put the impostor's message in the
-       * terminal above four lines that were written before it. The record
-       * prints the room in the order the room saw it (`game/transcript.ts`) and
-       * this posts the half only this file can see: the shape it was drawn to
-       * write, what it cost, and how long it took.
-       */
-      noteImpostorCall(turn.roomId, {
-        ms: Date.now() - started,
-        shape: result.shape ?? null,
-        fellBack: result.text === null,
-        at: Date.now(),
-        cost: result.usage.cost ?? 0,
-      });
-
       return result.text;
     } catch (error) {
       totals.failures += 1;
       console.error(`  game answer failed (${error?.status ?? 500}): ${error.message}`);
-      noteImpostorCall(turn.roomId, {
-        ms: Date.now() - started,
-        shape: null,
-        fellBack: true,
-        at: Date.now(),
-        cost: 0,
-      });
       return null;
     }
   },
@@ -323,14 +295,6 @@ server.listen(PORT, () => {
   console.log(`\n  put that in EXPO_PUBLIC_IMPOSTOR_URL and start the app`);
   console.log(`  online play:     ws://${lanAddress()}:${PORT}/game   (EXPO_PUBLIC_GAME_URL)\n`);
 
-  /*
-   * Said out loud because it writes what people typed to a file, and a thing
-   * that records a conversation should never be doing it quietly.
-   */
-  const transcripts = transcriptPath();
-  if (transcripts) {
-    console.log(`  transcripts      ${transcripts}/   (GAME_LOG=off to stop)\n`);
-  }
 
   /*
    * Which route, said plainly.

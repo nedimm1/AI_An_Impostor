@@ -4,7 +4,6 @@
 .env.*
 
 node_modules
-logs
 *.test.js
 *.test.ts
 Dockerfile
