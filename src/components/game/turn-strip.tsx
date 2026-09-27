@@ -114,6 +114,7 @@ function Seat({
             tint={player.tint}
             size={WAITING}
             dimmed={state === 'spent'}
+            star={player.star}
             ringColor={now ? lit : undefined}
           />
         )}

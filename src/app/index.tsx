@@ -5,6 +5,7 @@ import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { RoomSizePicker } from '@/components/game/room-size-picker';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
+import { Pill } from '@/components/ui/pill';
 import { Screen } from '@/components/ui/screen';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useRoomStore } from '@/game/store';
@@ -25,10 +26,13 @@ const LOGO_SIZE = 270;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { roomSize, setRoomSize, notice, dismissNotice } = useRoomStore();
+  const { roomSize, setRoomSize, notice, dismissNotice, pro, requestPlay } = useRoomStore();
   // The size is picked right here, so the button goes straight to the queue.
   // There is no name to pick either — the room deals one when it seats you.
-  const handlePlay = () => router.push('/queue');
+  // Out of free matches, it shows the paywall first (`game/pro.ts`).
+  const handlePlay = async () => {
+    if (await requestPlay()) router.push('/queue');
+  };
 
   return (
     <Screen>
@@ -46,6 +50,8 @@ export default function HomeScreen() {
               web: 'question_mark',
             }}
           />
+          {/* Opposite the help button, so having paid is visible at a glance. */}
+          {pro.pro ? <Pill label="PRO" tone="accent" style={styles.proBadge} /> : null}
         </View>
 
         <View style={styles.hero}>
@@ -113,9 +119,49 @@ export default function HomeScreen() {
             <RoomSizePicker value={roomSize} onChange={setRoomSize} />
           </View>
           <Button label="Find a game" onPress={handlePlay} />
+          <ProStatus />
         </View>
       </View>
     </Screen>
+  );
+}
+
+/**
+ * One line under the play button: unlimited, or how many matches are left —
+ * today's free ones and any bought ones, as one number — with a way to get
+ * more. Absent when there is nothing to buy (`game/pro.ts`).
+ */
+function ProStatus() {
+  const { pro } = useRoomStore();
+  if (!pro.enabled) return null;
+
+  if (pro.pro) {
+    return (
+      <ThemedText type="small" themeColor="textSecondary" style={styles.proStatus}>
+        Unlimited matches
+      </ThemedText>
+    );
+  }
+
+  // Free and bought together: how many more matches you can play right now.
+  const total = pro.freeLeft + pro.paidLeft;
+  const left =
+    total === 0 ? 'No matches left today' : `${total} ${total === 1 ? 'match' : 'matches'} left`;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${left}. Get more matches`}
+      onPress={() => void pro.openPaywall()}
+      hitSlop={8}
+      style={({ pressed }) => pressed && styles.pressed}>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.proStatus}>
+        {left} ·{' '}
+        <ThemedText type="smallBold" style={styles.goPro}>
+          Get more
+        </ThemedText>
+      </ThemedText>
+    </Pressable>
   );
 }
 
@@ -212,5 +258,14 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.6,
+  },
+  proBadge: {
+    alignSelf: 'center',
+  },
+  proStatus: {
+    textAlign: 'center',
+  },
+  goPro: {
+    color: Colors.accentText,
   },
 });

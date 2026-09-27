@@ -79,6 +79,8 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
   const socketRef = useRef<WebSocket | null>(null);
   /** The room size you queued for, so a reconnect can put you back in that queue. Null when not queueing. */
   const wantsMatchRef = useRef<RoomSize | null>(null);
+  /** Whether the last `findMatch` asked for the red star; resent with it on reconnect. */
+  const starRef = useRef(false);
   /** The latest room, read when stamping an intent with its moment. */
   const roomRef = useRef<Room | null>(null);
   /** The same room as the server sent it, deadlines on the server's clock. */
@@ -134,7 +136,9 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
         say({ type: 'hello', playerId });
         // Dropped while queueing: ask again. The server ignores it if you are
         // already in a match, and sends that match instead.
-        if (wantsMatchRef.current !== null) say({ type: 'findMatch', seats: wantsMatchRef.current });
+        if (wantsMatchRef.current !== null) {
+          say({ type: 'findMatch', seats: wantsMatchRef.current, star: starRef.current });
+        }
 
         // What you did while away, in the order you did it. Each is stamped
         // with its moment, and the server drops the ones that no longer apply.
@@ -252,10 +256,11 @@ export function useRemoteTransport(profile: Profile | null): MatchTransport {
   }, [resumedAt]);
 
   const findMatch = useCallback(
-    (size: RoomSize) => {
+    (size: RoomSize, star = false) => {
       wantsMatchRef.current = size;
+      starRef.current = star;
       setNotice(null);
-      post({ type: 'findMatch', seats: size });
+      post({ type: 'findMatch', seats: size, star });
     },
     [post]
   );

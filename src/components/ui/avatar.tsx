@@ -1,6 +1,6 @@
-import { Image, StyleSheet, View, type ViewStyle } from 'react-native';
+import { Image, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { colorForId, Radius } from '@/constants/theme';
+import { Colors, colorForId, Radius } from '@/constants/theme';
 
 /**
  * One face, worn by everybody, on a disc of that seat's own colour.
@@ -46,10 +46,12 @@ type AvatarProps = {
   /** A ring over the disc, e.g. to mark the current speaker. */
   ringColor?: string;
   dimmed?: boolean;
+  /** The red star: this seat subscribes (`Player.star`). */
+  star?: boolean;
   style?: ViewStyle;
 };
 
-export function Avatar({ id, name, tint, size = 40, ringColor, dimmed, style }: AvatarProps) {
+export function Avatar({ id, name, tint, size = 40, ringColor, dimmed, star, style }: AvatarProps) {
   const color = tint || colorForId(id);
 
   // Deliberately wider than the disc, and pushed down inside it. Both are what
@@ -59,35 +61,51 @@ export function Avatar({ id, name, tint, size = 40, ringColor, dimmed, style }: 
   // showing a sliver of the disc through it — falls below the crop.
   const width = size * 1.15;
 
+  // Sits on the rim, outside the circle's crop, so the disc stays a clean crop
+  // and the star reads as a badge on it rather than part of the portrait.
+  const badge = Math.max(12, Math.round(size * 0.38));
+
   return (
     <View
       accessibilityRole="image"
-      accessibilityLabel={name}
-      style={[
-        styles.base,
-        {
-          width: size,
-          height: size,
-          borderRadius: Radius.pill,
-          backgroundColor: color,
-          borderColor: ringColor ?? 'transparent',
-          borderWidth: ringColor ? 2 : 0,
-          opacity: dimmed ? 0.4 : 1,
-        },
-        style,
-      ]}>
-      <Image
-        source={MISTER}
-        style={{
-          width,
-          height: width * FIGURE_RATIO,
-          // translateY rather than a margin: a margin is part of the box being
-          // centred, so half of it is given straight back and the number stops
-          // meaning what it says.
-          transform: [{ translateY: size * 0.18 }],
-        }}
-        resizeMode="contain"
-      />
+      accessibilityLabel={star ? `${name}, subscriber` : name}
+      style={[{ width: size, height: size, opacity: dimmed ? 0.4 : 1 }, style]}>
+      <View
+        style={[
+          styles.base,
+          {
+            width: size,
+            height: size,
+            borderRadius: Radius.pill,
+            backgroundColor: color,
+            borderColor: ringColor ?? 'transparent',
+            borderWidth: ringColor ? 2 : 0,
+          },
+        ]}>
+        <Image
+          source={MISTER}
+          style={{
+            width,
+            height: width * FIGURE_RATIO,
+            // translateY rather than a margin: a margin is part of the box being
+            // centred, so half of it is given straight back and the number stops
+            // meaning what it says.
+            transform: [{ translateY: size * 0.18 }],
+          }}
+          resizeMode="contain"
+        />
+      </View>
+      {star ? (
+        <View
+          style={[
+            styles.star,
+            { width: badge, height: badge, right: -badge * 0.15, bottom: -badge * 0.15 },
+          ]}>
+          <Text style={[styles.starGlyph, { fontSize: badge * 0.62, lineHeight: badge * 0.8 }]}>
+            ★
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -98,5 +116,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     // The figure is wider than the disc at the shoulders; the circle crops it.
     overflow: 'hidden',
+  },
+  star: {
+    position: 'absolute',
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.accent,
+    // A ring in the page colour, so the badge stays separate from any disc.
+    borderWidth: 1.5,
+    borderColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  starGlyph: {
+    color: Colors.textOnAccent,
+    textAlign: 'center',
+    includeFontPadding: false,
   },
 });

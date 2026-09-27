@@ -161,7 +161,9 @@ export class Match {
     /** Called after every change, so the caller can send people the new room. */
     private readonly onChange: (match: Match) => void,
     /** Called once, when the match is over and nobody needs it any more. */
-    private readonly onEnd: (match: Match) => void
+    private readonly onEnd: (match: Match) => void,
+    /** People (player ids) who subscribe, and whose seat wears the red star. */
+    starred: ReadonlySet<string> = new Set()
   ) {
     if (humanIds.length === 0) throw new Error('a match needs at least one person');
     const fullRoom = DEFAULT_SETTINGS.playerCount - 1;
@@ -195,6 +197,25 @@ export class Match {
       humanIds: seatIds,
     });
     if (!started) throw new Error('the room did not start');
+
+    /*
+     * The red star (`Player.star`), shown to everybody. People wear it when
+     * they subscribe; the impostor wears one as often as the people in this
+     * room do. Without that, the one seat that can never have a star is the
+     * impostor's, and any star in the room is a seat cleared for free — in a
+     * room of three, that is the whole game. Matching the room rather than a
+     * global rate means a star never says more about a seat than the room
+     * already says about itself: none starred, the impostor never is; all
+     * starred, it always is.
+     */
+    const starredSeats = new Set(
+      humanIds.filter((id) => starred.has(id)).map((id) => this.seatOf.get(id)!)
+    );
+    const impostorStar = Math.random() < starredSeats.size / humanIds.length;
+    started.players = started.players.map((p) => ({
+      ...p,
+      star: this.humanSeats.has(p.id) ? starredSeats.has(p.id) : impostorStar,
+    }));
 
     this.room = started;
     this.id = started.id;

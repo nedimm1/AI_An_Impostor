@@ -23,8 +23,12 @@ export type ClientMessage =
    * same player rather than a new one.
    */
   | { type: 'hello'; playerId: string }
-  /** Put me in the queue for a room of this many seats. */
-  | { type: 'findMatch'; seats: RoomSize }
+  /**
+   * Put me in the queue for a room of this many seats. `star`: I subscribe to
+   * unlimited matches, so my seat wears the red star (`Player.star`). Taken on
+   * the phone's word — the server does not check purchases.
+   */
+  | { type: 'findMatch'; seats: RoomSize; star?: boolean }
   /**
    * Something my player does in the room.
    *

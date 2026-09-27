@@ -55,6 +55,13 @@ export type Player = {
    * always absent on one device.
    */
   awayUntil?: number | null;
+  /**
+   * The red star: this seat's player subscribes to unlimited matches. Shown to
+   * the whole room, so the impostor's seat is given one at the same rate as
+   * the people it sits with (`server/game/match.ts`) — a star that only people
+   * could have would tell the room who is human. Absent on one device.
+   */
+  star?: boolean;
 };
 
 /** See `Player.departedBecause`. */

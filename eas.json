@@ -6,18 +6,21 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_GAME_URL": "wss://aianimposterapi.muhamedmuminovic.com/game"
+      }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_GAME_URL": "wss://REPLACE-ME.example.com/game"
+        "EXPO_PUBLIC_GAME_URL": "wss://aianimposterapi.muhamedmuminovic.com/game"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_GAME_URL": "wss://REPLACE-ME.example.com/game"
+        "EXPO_PUBLIC_GAME_URL": "wss://aianimposterapi.muhamedmuminovic.com/game"
       }
     }
   },

@@ -66,6 +66,8 @@ export class Lobby {
   /** One queue per room size, in the order people joined it. */
   private readonly queues = new Map<RoomSize, string[]>(ROOM_SIZES.map((size) => [size, []]));
   private readonly byPlayer = new Map<string, Match>();
+  /** People queueing who asked for the red star (`Player.star`). */
+  private readonly starred = new Set<string>();
   /** People in a match whose connection is down, and the timer that removes them. */
   private readonly away = new Map<string, ReturnType<typeof setTimeout>>();
   /** People removed for being away, until they come back and are told. */
@@ -95,10 +97,15 @@ export class Lobby {
     return { found: this.queue(size).length, total: size - 1 };
   }
 
-  join(playerId: string, size: RoomSize) {
+  join(playerId: string, size: RoomSize, star = false) {
     if (!isRoomSize(size)) return;
     // Already playing — the caller just re-sends the room.
     if (this.byPlayer.has(playerId)) return;
+
+    // Kept up to date even on a repeat request: subscribing while queued
+    // counts for the match this queue starts.
+    if (star) this.starred.add(playerId);
+    else this.starred.delete(playerId);
 
     // Left a match early and still waiting it out.
     const cooldownMs = this.penalties.cooldownLeft(playerId);
@@ -221,6 +228,9 @@ export class Lobby {
   }
 
   private start(people: string[]) {
+    const starred = new Set(people.filter((id) => this.starred.has(id)));
+    people.forEach((id) => this.starred.delete(id));
+
     const match = new Match(
       people,
       this.model,
@@ -234,7 +244,8 @@ export class Lobby {
           if (m.isOver()) this.penalties.completed(id);
         });
         this.events.matchEnded(m, stillIn);
-      }
+      },
+      starred
     );
 
     people.forEach((id) => {

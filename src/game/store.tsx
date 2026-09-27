@@ -9,6 +9,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -17,6 +18,7 @@ import {
 } from 'react';
 
 import { useLocalTransport } from './local-transport';
+import { usePro, type ProState } from './pro';
 import { loadProfile, saveProfile, type Profile } from './profile';
 import { GAME_URL, useRemoteTransport } from './remote-transport';
 import type { MatchTransport } from './transport';
@@ -64,6 +66,13 @@ type RoomContextValue = MatchTransport & {
    */
   roomSize: RoomSize;
   setRoomSize: (size: RoomSize) => void;
+  /** Impostor Pro and today's free matches (`pro.ts`). */
+  pro: ProState;
+  /**
+   * Whether a new match may start, showing the paywall first when today's free
+   * matches are used up. Every "play" button asks this before the queue.
+   */
+  requestPlay: () => Promise<boolean>;
 };
 
 const RoomContext = createContext<RoomContextValue | null>(null);
@@ -98,14 +107,33 @@ export function RoomProvider({ children }: PropsWithChildren) {
   // Five by default: the full game, and the one the rules were tuned for.
   const [roomSize, setRoomSize] = useState<RoomSize>(5);
 
+  const pro = usePro(profile?.playerId ?? null, transport.room?.id ?? null);
+  const { canPlay, openPaywall } = pro;
+  const requestPlay = useCallback(
+    async () => canPlay || (await openPaywall()),
+    [canPlay, openPaywall]
+  );
+
+  // Every match request says whether you subscribe, so your seat wears the
+  // red star (`Player.star`). Screens just ask for a size.
+  const { findMatch: transportFindMatch } = transport;
+  const subscribed = pro.pro;
+  const findMatch = useCallback(
+    (size: RoomSize) => transportFindMatch(size, subscribed),
+    [transportFindMatch, subscribed]
+  );
+
   const value = useMemo(
     () => ({
       ...transport,
+      findMatch,
       hydrated: profile !== null,
       roomSize,
       setRoomSize,
+      pro,
+      requestPlay,
     }),
-    [transport, profile, roomSize]
+    [transport, findMatch, profile, roomSize, pro, requestPlay]
   );
 
   return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>;

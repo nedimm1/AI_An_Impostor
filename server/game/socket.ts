@@ -160,7 +160,7 @@ export function attachGame(server: Server, model: ImpostorModel) {
         // Only the sizes the game offers. Anything else is not a request a
         // real phone makes.
         if (!isRoomSize(message.seats)) return;
-        lobby.join(playerId, message.seats);
+        lobby.join(playerId, message.seats, message.star === true);
         return;
       }
 

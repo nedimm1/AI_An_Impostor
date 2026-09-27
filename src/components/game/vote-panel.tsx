@@ -107,6 +107,7 @@ export function VotePanel({
                   tint={player.tint}
                   size={46}
                   dimmed={player.isYou}
+                  star={player.star}
                   ringColor={
                     isSelected ? Colors.accent : isAccused ? Colors.warning : undefined
                   }

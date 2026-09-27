@@ -29,7 +29,7 @@ import { useLeaveGame } from '@/hooks/use-leave-game';
  */
 export default function ResultsScreen() {
   const router = useRouter();
-  const { room, send } = useRoomStore();
+  const { room, send, requestPlay } = useRoomStore();
 
   const decided = room?.outcome != null;
   const youWereVotedOut = room != null && room.eliminatedId === room.youId;
@@ -83,7 +83,9 @@ export default function ResultsScreen() {
 
   const handleKeepWatching = () => send({ type: 'spectate' });
 
-  const handlePlayAgain = () => {
+  const handlePlayAgain = async () => {
+    // Out of free matches and no Pro bought: stay on the results.
+    if (!(await requestPlay())) return;
     send({ type: 'leave' });
     router.replace('/queue');
   };

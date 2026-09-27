@@ -177,3 +177,48 @@ describe('seats in an online match', () => {
     throw new Error('no match opened on a person’s turn in 100 draws');
   });
 });
+
+describe('the red star', () => {
+  const quietModel: ImpostorModel = {
+    answer: async () => null,
+    vote: async () => null,
+  };
+  const alice = '3f2a91c4-8b1e-4d2a-9c3f-1a2b3c4d5e6f';
+  const bob = '7c9d0e1f-2a3b-4c5d-8e9f-0a1b2c3d4e5f';
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  /** Stars as alice sees them, with the impostor's seat picked out by the server's copy. */
+  const stars = (starred: string[]) => {
+    const match = new Match([alice, bob], quietModel, () => {}, () => {}, new Set(starred));
+    const impostorId = match.snapshot().impostorId;
+    const seen = match.view(alice).players;
+    const impostor = seen.find((p) => p.id === impostorId)!;
+    const people = seen.filter((p) => p.id !== impostorId);
+    match.leave(alice);
+    match.leave(bob);
+    return { impostor: impostor.star, people: people.map((p) => p.star).sort() };
+  };
+
+  it('is sent to everybody, on the seats of the people who subscribe', () => {
+    expect(stars([alice]).people).toEqual([false, true]);
+  });
+
+  it('is never worn by the impostor alone in a room where nobody subscribes', () => {
+    expect(stars([]).impostor).toBe(false);
+  });
+
+  it('is always worn by the impostor in a room where everybody subscribes', () => {
+    expect(stars([alice, bob]).impostor).toBe(true);
+  });
+
+  it('is worn by the impostor as often as by the people it sits with', () => {
+    let worn = 0;
+    const draws = 400;
+    for (let i = 0; i < draws; i++) if (stars([alice]).impostor) worn += 1;
+    // One of two people starred: about half the time.
+    expect(worn / draws).toBeGreaterThan(0.4);
+    expect(worn / draws).toBeLessThan(0.6);
+  });
+});

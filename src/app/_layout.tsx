@@ -66,6 +66,7 @@ function Routes() {
       <Stack.Screen name="index" />
       <Stack.Screen name="queue" options={{ gestureEnabled: false }} />
       <Stack.Screen name="how-to-play" options={modalOptions} />
+      <Stack.Screen name="paywall" options={modalOptions} />
       <Stack.Screen name="room/[id]" />
     </Stack>
   );

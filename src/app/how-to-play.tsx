@@ -5,6 +5,8 @@ import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Colors, Radius, Spacing } from '@/constants/theme';
+import { FREE_MATCHES_PER_DAY } from '@/game/pro';
+import { useRoomStore } from '@/game/store';
 import { DEFAULT_SETTINGS } from '@/game/types';
 
 const { turnsEach, answerSeconds, tiebreakerTurns, tiebreakerTurnsAccused } =
@@ -47,13 +49,25 @@ const STEPS = [
   },
 ];
 
+/**
+ * The allowance (`game/pro.ts`). A rule like any other — how many matches you
+ * get decides how you play them — and absent where there is nothing to buy.
+ */
+const MATCHES_STEP = {
+  title: `${FREE_MATCHES_PER_DAY} free matches every day`,
+  body: `Every match has a real AI in it, so matches are limited: you get ${FREE_MATCHES_PER_DAY} free every day, and they come back at midnight. Want more? Buy a pack of matches, which never expire, or subscribe for unlimited matches.`,
+};
+
 export default function HowToPlayScreen() {
+  const { pro } = useRoomStore();
+  const steps = pro.enabled ? [...STEPS, MATCHES_STEP] : STEPS;
+
   return (
     <Screen>
       <ScreenHeader title="How to play" />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {STEPS.map((step, i) => (
+        {steps.map((step, i) => (
           <Card key={step.title}>
             <View style={styles.step}>
               <View style={styles.badge}>

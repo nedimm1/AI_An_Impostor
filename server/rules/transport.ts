@@ -69,8 +69,11 @@ export type MatchTransport = {
   room: Room | null;
   /** Non-null while the matchmaker is seating you. */
   matchmaking: Matchmaking | null;
-  /** Ask to be put in a room of this many seats, the impostor's included. */
-  findMatch: (size: RoomSize) => void;
+  /**
+   * Ask to be put in a room of this many seats, the impostor's included.
+   * `star`: you subscribe, so your seat wears the red star (`Player.star`).
+   */
+  findMatch: (size: RoomSize, star?: boolean) => void;
   /** Do something. Quietly ignored when it is not yours to do. */
   send: (intent: Intent) => void;
   /**
