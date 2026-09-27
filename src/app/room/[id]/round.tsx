@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   View,
@@ -32,6 +31,7 @@ import {
   youAreOut,
 } from '@/game/types';
 import { useCountdown } from '@/hooks/use-countdown';
+import { useKeyboardVisible } from '@/hooks/use-keyboard-visible';
 import { useLeaveGame } from '@/hooks/use-leave-game';
 
 /**
@@ -42,6 +42,7 @@ export default function RoundScreen() {
   const router = useRouter();
   const { room, send, draft } = useRoomStore();
   const insets = useSafeAreaInsets();
+  const keyboardUp = useKeyboardVisible();
   const listRef = useRef<FlatList>(null);
   const composerRef = useRef<ComposerHandle>(null);
   // A new answer always pulls the transcript to the end, however far back you
@@ -205,9 +206,11 @@ export default function RoundScreen() {
 
   return (
     <Screen edges={['top', 'left', 'right']} padded={false}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* Padding on Android too. Android draws edge to edge now, so the window
+        no longer shrinks for the keyboard and the composer sat under it. The
+        padding is the measured overlap, so where the window does still shrink
+        it comes out as nothing rather than a second gap. */}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <RoundBar
           round={room.round}
           tiebreaker={inTiebreaker}
@@ -373,7 +376,11 @@ export default function RoundScreen() {
             onCancelReply={() => setReplyToId(null)}
           />
         )}
-        <View style={{ height: insets.bottom, backgroundColor: Colors.background }} />
+        {/* Clear of the navigation bar — except with the keyboard up, which
+          already covers it, and where this would be a gap above the keys. */}
+        <View
+          style={{ height: keyboardUp ? 0 : insets.bottom, backgroundColor: Colors.background }}
+        />
       </KeyboardAvoidingView>
     </Screen>
   );

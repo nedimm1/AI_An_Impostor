@@ -88,19 +88,6 @@ export default function PaywallScreen() {
     }
   };
 
-  const restore = async () => {
-    setBusy(true);
-    try {
-      await Purchases.restorePurchases();
-      await refresh();
-      Alert.alert('Purchases restored', 'Anything you bought before is back.');
-    } catch {
-      Alert.alert('Could not restore', 'Could not restore purchases. Try again in a moment.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const chosen = plans?.find((plan) => plan.pkg.identifier === selected) ?? null;
 
   return (
@@ -143,16 +130,6 @@ export default function PaywallScreen() {
           loading={busy}
           onPress={() => chosen && void buy(chosen.pkg)}
         />
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void restore()}
-          disabled={busy}
-          hitSlop={8}
-          style={({ pressed }) => pressed && styles.pressed}>
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.centered}>
-            Restore purchases
-          </ThemedText>
-        </Pressable>
       </View>
     </Screen>
   );
