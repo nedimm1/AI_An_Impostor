@@ -1,56 +1,132 @@
-# Welcome to your Expo app 👋
+# AI: An Impostor
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**One of the strangers isn't a person.**
 
-## Get started
+An online social deduction game for Android and iOS. You're matched with strangers in a small chat room and given a conversation starter. Everyone answers in turn — and one seat is an AI pretending to be one of you. After each round the room votes someone out. Find the machine before it outlasts you.
 
-1. Install dependencies
+Built with Expo (React Native) for [RevenueCat Shipaton 2026](https://revenuecat-shipaton-2026.devpost.com/).
 
-   ```bash
-   npm install
-   ```
+## How a match works
 
-2. Start the app
+- Pick a room size: **Duel** (2 people + the AI), **Quick** (3 + AI) or **Classic** (4 + AI), and tap *Find a game*.
+- Every seat is dealt a colour name for the match — *Mr. Pink*, *Mr. Blue* — so nobody can be recognised and nothing typed about a player gives the AI away.
+- The room answers a prompt, three messages each, 40 seconds a turn. Then everyone votes; the most-voted player is out. Ties go to a tiebreaker.
+- Vote the AI out and the humans win. Let it whittle the room down, and it wins.
 
-   ```bash
-   npx expo start
-   ```
+## The AI impostor
 
-In the output, you'll find options to open the app in a
+The whole game rests on one question: can a language model pass as a stranger typing on a phone? Most of the work in this project went into making the answer *yes, often*. The impostor runs on the server ([`server/impostor.js`](server/impostor.js)), on an open model through OpenRouter (Gemma by default) — the phones never see a key or a prompt.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+**It is not told to act human — it is given a human to be.** Each match it is dealt a persona, a first name and a phone-sized typing window, and told not to *perform* being human. The word "AI" only comes up when somebody in the room accuses it of being one — so it can react the way an accused person would.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+**It sees the room the way a player does.** Each turn it gets the prompt, this round's messages (and who replied to whom), who ran out of time or lost connection, what it said in earlier rounds, the recent past of the others, and every past vote ([`server/rules/impostor-payload.ts`](server/rules/impostor-payload.ts)).
 
-## Get a fresh project
+**Every match it types like a different person.** Drawn once per match: how long its messages run, how often it makes typos, whether its phone auto-capitalises, even which topics it doesn't follow. Drawn per message: its length, whether it agrees or pushes back, how it answers being accused. About one match in twenty it commits to a bit for the whole match.
 
-When you're ready, run:
+**What comes back is roughed up like thumb-typing.** Lowercased, em dashes and semicolons stripped, apostrophes dropped, the occasional swapped or missing letter, phone-style capitals put back. In a room that swears, it swears. A reply that names someone, repeats itself or claims to know a stranger's life is thrown away and asked for again.
 
-```bash
-npm run reset-project
+**It keeps a human's timing.** It "sends" after a delay that grows with the length of the message, replies to someone once the room is actually talking, and very occasionally lets a turn pass — but never right after it has been called out ([`server/rules/humanlike.ts`](server/rules/humanlike.ts)).
+
+**It votes to survive.** It won't vote for someone it just defended, follows through on anyone it accused, and otherwise joins the room's majority instead of making revenge votes.
+
+**Nothing on screen gives it away.** Its seat id comes from the same generator as everyone's, turn order and colour names are shuffled, and the subscriber star is dealt to it at the same rate as the humans around it. If the model is slow or fails, a stock line goes out before the turn ends — the room never sees a seat stall.
+
+## Monetization (RevenueCat)
+
+Every match has a real language model in it, answering on each of its turns, so every match costs money to run. What players pay for is **more matches** — nothing about a match changes with a purchase, so the room can never tell who paid.
+
+| Offer | Type | Price | Gives |
+|---|---|---|---|
+| Free | — | — | 3 matches every day, back at midnight |
+| `matches_20` | Consumable | $2.99 | 20 matches, never expire |
+| `matches_100` | Consumable | $9.99 | 100 matches, never expire |
+| `Unlimited` | Monthly subscription | $4.99 / month | Unlimited matches while subscribed (`unlimited` entitlement) |
+
+How it is built:
+
+- **RevenueCat SDK** (`react-native-purchases`) is configured with the player's own id, so purchases belong to the same player the game server knows. See [`src/game/pro.ts`](src/game/pro.ts).
+- **Offerings drive the shop.** The paywall ([`src/app/paywall.tsx`](src/app/paywall.tsx)) is drawn in the game's own style, but what is for sale and every price comes from the RevenueCat default offering, in the player's currency.
+- **Entitlement for the subscription, transactions for the packs.** Unlimited is the `unlimited` entitlement (only while active); bought matches are counted from the consumable purchases in the customer's history. Free matches are spent first, bought ones after.
+- **The paywall appears at the moment it matters** — tapping *Find a game* with no matches left opens it, and a purchase goes straight into the queue.
+- **A red star for subscribers**, shown to the whole room. Because the AI can never subscribe, a star would prove a seat is human — so the server gives the AI a star at the same rate as the people in that room (`server/game/match.ts`). A star says nothing about who the impostor is.
+
+Known shortcut: match usage is counted on the device, so a reinstall resets it. The next step is moving the count server-side (e.g. RevenueCat virtual currencies).
+
+## Architecture
+
+```
+┌──────────────┐   WebSocket /game   ┌─────────────────────────────┐   HTTPS   ┌────────────┐
+│  Expo app     │ ─────────────────▶ │  Game server (Node, ws)      │ ────────▶ │ OpenRouter │
+│  (phones)     │ ◀───────────────── │  matchmaking · match rules   │           │  (the AI)  │
+│  RevenueCat   │   room, filtered   │  timers · the impostor seat  │           └────────────┘
+└──────────────┘   per player        └─────────────────────────────┘
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+- **The server is authoritative.** Matches run on the server; each phone gets only its own view of the room. Who the impostor is, other people's open votes and upcoming prompts are removed before anything is sent (`server/game/view.ts`).
+- **The API key never reaches the app.** Only the server talks to the model.
+- **Built for real phones:** a heartbeat detects silent drops, a dropped player is shown reconnecting to the room for 25 seconds, and whatever they had typed is posted for them if they don't come back. Leaving matches early earns a cooldown.
+- The shared game rules live in `server/rules/`, imported by both the server and the app.
 
-### Other setup steps
+## Run it yourself
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Requirements: Node 22.13+, an [OpenRouter](https://openrouter.ai) API key for the AI, and for purchases a [RevenueCat](https://www.revenuecat.com) project.
 
-## Learn more
+### 1. Install and configure
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npm install
+cp .env.example .env
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Fill in `.env`:
 
-## Join the community
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...                        # the server's key for the AI
+EXPO_PUBLIC_GAME_URL=ws://<your-computer's-LAN-IP>:8787/game
+EXPO_PUBLIC_REVENUECAT_API_KEY=test_...               # optional, see step 4
+```
 
-Join our community of developers creating universal apps.
+### 2. Start the game server
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npm run impostor:server
+```
+
+Or with Docker, from `server/`: `docker compose up -d --build`. It listens on port 8787 and prints the address to use for `EXPO_PUBLIC_GAME_URL`.
+
+### 3. Start the app
+
+```bash
+npx expo start
+```
+
+A match needs 2–4 people queueing for the same room size, so use two phones or a phone and an emulator. Without `EXPO_PUBLIC_GAME_URL`, a development build plays the whole match on one device against bots.
+
+### 4. Purchases (optional)
+
+Real purchases need a **development build** — Expo Go only mocks RevenueCat, so the app switches the paywall and the match limit off there.
+
+```bash
+npx eas build --profile development --platform android
+```
+
+In the RevenueCat dashboard, with a **Test Store** app:
+
+1. Create the products `matches_20` and `matches_100` (consumable) and `Unlimited` (monthly subscription).
+2. Create the entitlement `unlimited` and attach only the subscription to it.
+3. Add all three to the **default** offering.
+4. Put the Test Store public key in `EXPO_PUBLIC_REVENUECAT_API_KEY`.
+
+Test Store keys must never ship in a store build.
+
+## Tests
+
+```bash
+npm test
+```
+
+Covers the match rules, what each phone is allowed to see, reconnects, matchmaking, penalties, the impostor's prompts and the red star's fairness.
+
+## License
+
+[MIT](LICENSE) © 2026 Nedim Muminovic
