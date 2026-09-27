@@ -2,7 +2,7 @@
 
 **One of the strangers isn't a person.**
 
-An online social deduction game for Android and iOS. You're matched with strangers in a small chat room and given a conversation starter. Everyone answers in turn — and one seat is an AI pretending to be one of you. After each round the room votes someone out. Find the machine before it outlasts you.
+An online social deduction game for Android. You're matched with strangers in a small chat room and given a conversation starter. Everyone answers in turn — and one seat is an AI pretending to be one of you. After each round the room votes someone out. Find the machine before it outlasts you.
 
 Built with Expo (React Native) for [RevenueCat Shipaton 2026](https://revenuecat-shipaton-2026.devpost.com/).
 
