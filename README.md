@@ -2,55 +2,235 @@
 
 **One of the strangers isn't a person.**
 
-An online social deduction game for Android. You're matched with strangers in a small chat room and given a conversation starter. Everyone answers in turn — and one seat is an AI pretending to be one of you. After each round the room votes someone out. Find the machine before it outlasts you.
+An online social deduction game for Android. You're matched with strangers in a small chat room, and one of them is an AI pretending to be one of you. Find the machine and vote it out before it outlasts you.
 
 Built with Expo (React Native) for [RevenueCat Shipaton 2026](https://revenuecat-shipaton-2026.devpost.com/).
 
-## How a match works
+## Everything runs on a server
 
-- Pick a room size: **Duel** (2 people + the AI), **Quick** (3 + AI) or **Classic** (4 + AI), and tap *Find a game*.
-- Every seat is dealt a colour name for the match — *Mr. Pink*, *Mr. Blue* — so nobody can be recognised and nothing typed about a player gives the AI away.
-- The room answers a prompt, three messages each, 40 seconds a turn. Then everyone votes; the most-voted player is out. Ties go to a tiebreaker.
-- Vote the AI out and the humans win. Let it whittle the room down, and it wins.
+The app doesn't run the game on your phone. An online server runs every match:
 
-## The AI impostor
+- It matches strangers into rooms, keeps the timers and counts the votes.
+- The AI plays from the server too. Only the server talks to the AI model, so your phone never sees the AI's instructions or the key used to run it.
+- Each phone gets only what that player is allowed to see. Your phone is never told who the AI is, so you can't find out by digging into the app.
 
-The whole game rests on one question: can a language model pass as a stranger typing on a phone? Most of the work in this project went into making the answer *yes, often*. The impostor runs on the server ([`server/impostor.js`](server/impostor.js)), on an open model through OpenRouter (Gemma by default) — the phones never see a key or a prompt.
+## Starting a match
 
-**It is not told to act human — it is given a human to be.** Each match it is dealt a persona, a first name and a phone-sized typing window, and told not to *perform* being human. The word "AI" only comes up when somebody in the room accuses it of being one — so it can react the way an accused person would.
+1. **Choose a room size:**
+   - **Duel:** 2 people and the AI
+   - **Quick:** 3 people and the AI
+   - **Classic:** 4 people and the AI
+2. Tap **Find a game**. The server waits until enough real people have queued for that size, then puts everyone in a room and adds the AI.
 
-**It sees the room the way a player does.** Each turn it gets the prompt, this round's messages (and who replied to whom), who ran out of time or lost connection, what it said in earlier rounds, the recent past of the others, and every past vote ([`server/rules/impostor-payload.ts`](server/rules/impostor-payload.ts)).
+## The aliases: a nod to *Reservoir Dogs*
 
-**Every match it types like a different person.** Drawn once per match: how long its messages run, how often it makes typos, whether its phone auto-capitalises, even which topics it doesn't follow. Drawn per message: its length, whether it agrees or pushes back, how it answers being accused. About one match in twenty it commits to a bit for the whole match.
+Nobody types a name. When the room fills, every seat, including the AI's, is given a colour alias for that match only, like **Mr. Red**, **Mr. Blue**, **Mr. Pink** or **Mr. Gold**.
 
-**What comes back is roughed up like thumb-typing.** Lowercased, em dashes and semicolons stripped, apostrophes dropped, the occasional swapped or missing letter, phone-style capitals put back. In a room that swears, it swears. A reply that names someone, repeats itself or claims to know a stranger's life is thrown away and asked for again.
+The aliases are a reference to Quentin Tarantino's *Reservoir Dogs*. In the film, a crew of strangers is given colour code names like Mr. White, Mr. Orange and Mr. Pink, and one of them is secretly an undercover cop. Here too, you're among strangers with colour names, and one of them isn't who they seem.
 
-**It keeps a human's timing.** It "sends" after a delay that grows with the length of the message, replies to someone once the room is actually talking, and very occasionally lets a turn pass — but never right after it has been called out ([`server/rules/humanlike.ts`](server/rules/humanlike.ts)).
+## A round
 
-**It votes to survive.** It won't vote for someone it just defended, follows through on anyone it accused, and otherwise joins the room's majority instead of making revenge votes.
+**1. Chat**
 
-**Nothing on screen gives it away.** Its seat id comes from the same generator as everyone's, turn order and colour names are shuffled, and the subscriber star is dealt to it at the same rate as the humans around it. If the model is slow or fails, a stock line goes out before the turn ends — the room never sees a seat stall.
+- The room gets a simple question, like *"What's your go‑to snack at 2am?"* Each round has a new question.
+- Players answer **in turn**, **3 messages each**, with **40 seconds per turn**. You can reply to someone else's message.
+- The starting player changes each round, so nobody always has to go first.
+- Swear words are starred out.
+
+**2. Vote**
+
+- After the last message, everyone has **30 seconds** to vote for who they think is the AI, or to vote for nobody.
+- Votes stay hidden until everyone has voted or time runs out, so you can't see which way the room is going and follow along. After that, everyone sees who voted for whom.
+
+**3. Result**
+
+The player with the most votes is out. There are three special cases:
+
+- **If 2 players tie**, there's a **tiebreaker** (see below).
+- **If 3 or more players tie**, nobody is out and the round is used up.
+- **If nobody gets any votes**, nobody is out and the round is used up.
+
+Players who are voted out stay and watch the rest of the match, but can't chat or vote.
+
+## Tiebreaker
+
+When 2 players tie:
+
+1. The room is told who tied, and the chat opens again with the prompt *"It's between Mr. X and Mr. Y. Say your piece before the vote."*
+2. **The 2 accused players go first in every pass** and get **4 messages each**. Everyone else gets 3. The accused also get the last word before the vote.
+3. The room **votes again**. Anyone still in can be voted for, not just the 2 accused, in case the room decides both are innocent.
+4. **If it ties again**, nobody is out and the round is used up. There's only one tiebreaker per round.
+
+If one of the accused walks out during a tiebreaker, the other one isn't automatically voted out. Otherwise you could get someone removed just by leaving.
+
+## Winning
+
+- **The humans win** as soon as they vote out the AI.
+- **The AI wins** when:
+  - only **one human is left**, because one human can't outvote the AI, or
+  - the room uses up **4 rounds** without catching it.
+
+Every human voted out by mistake brings the AI closer to winning.
+
+## Disconnects
+
+- If your phone loses connection, your seat is held for **25 seconds**. The room sees that you're reconnecting.
+- If you don't come back in time, whatever you had typed is sent for you and the match carries on without you.
+
+## How the AI works
+
+The AI is a language model (Gemma, reached through OpenRouter) that plays one seat in the room. It runs on the game server ([`server/impostor.js`](server/impostor.js)), not on anyone's phone. It isn't told to "act human". It's given a person to be, and its job is to type like a real stranger on a phone.
+
+### It gets a person to be
+
+- **An identity:** each match it's given a made‑up person, like *"26, shares a flat, works shifts in a warehouse"* or *"19, first year at uni, plays five‑a‑side badly"*. It also gets a real first name and a gender, and it sticks to them all match.
+- **Topics it doesn't follow:** each match it randomly doesn't follow 2 topics, such as anime, football, horror or reality TV. If the room starts talking about one, it says so like a normal person would: *"idk i dont really watch anime"*. It can also simply not have seen a particular show: *"never seen it"*, *"i only got through s1 tbh"*.
+- **A running joke, 1 match in 20:** sometimes it commits to a bit for the whole match, even when it's accused. Examples:
+  - pirate: *"arr i be partial to a bit o pasta"*
+  - conspiracy theorist: *"this whole chat is a data harvest"*
+  - football commentator
+  - Gen‑Alpha slang: *"no cap"*, *"mid"*, *"cooked"*, *"aura"*
+  - astrology
+  - uwu
+  - Victorian gentleman
+  - pretending not to speak English: *"que? no entiendo"*
+
+### It types like someone on a phone
+
+Every message the model writes is put through a filter before the room sees it.
+
+**It uses slang and short forms, but not in every message:**
+
+- casual words and abbreviations: *yeah, nah, lol, tbh, idk, same, omg, fax, imma*
+- short replies to agree: *"yeah exactly"*, *"same"*, *"this is the correct answer"*
+- dodging a question it has nothing for: *"got nothing for this one tbh"*, *"cant cook at all lol"*
+- it leaves words out the way people do on a phone, and sometimes gets the grammar a bit wrong
+
+**Typos:** each match it's randomly a clean, average or messy typer. In a messy message it might:
+
+- swap two letters or drop one letter (*"teh"*, *"somthing"*)
+- drop an apostrophe (*dont*, *im*, *cant*)
+- leave off the full stop at the end
+
+It never puts a typo in a player's name.
+
+**Punctuation and capitals:**
+
+- It never uses the punctuation that gives an AI away: no em dashes, semicolons or neat quotation marks.
+- In 9 matches out of 10 it capitalises the way a phone keyboard auto‑corrects: the first letter and "I".
+- In the other 1 in 10 it types all lowercase, like someone with autocorrect off.
+
+**Message length:**
+
+- Each match it's randomly a short‑texter, an average texter or a talker.
+- It keeps an eye on how long everyone else's messages are and stays close to that. If the room is sending 4‑word replies, it won't write a paragraph.
+- It never sends two one‑word messages in a row.
+
+**Swearing:**
+
+- It swears only if the room is swearing. Then it uses the real words and short forms like *wtf, ffs, af, bs*, never softened versions like "frick".
+- It won't start swearing in a clean room.
+
+**Keyboard mashing:** if people start mashing the keyboard (*"asdjfhkasd"*), it either mashes back or reacts like a confused person: *"lol what"*, *"why are we doing this"*.
+
+**Messages that fail its checks are rewritten:**
+
+- repeating itself
+- claiming to know things about someone's life it couldn't know, like *"yours must be…"*
+- asking something that was already answered
+- using someone's name when it shouldn't
+
+### It reads the room
+
+**What it sees:** each turn it gets the same information a player would have ([`server/rules/impostor-payload.ts`](server/rules/impostor-payload.ts)):
+
+- the question and every message this round, including who replied to whom
+- who ran out of time or lost connection
+- who has been voted out
+- every vote so far
+- what it and others said in earlier rounds
+
+**Reading the mood:** it notices when the room is:
+
+- joking around
+- being sarcastic
+- arguing
+- swearing
+- busy guessing *"who is it?"*
+
+and it adapts. For example, if the room has gone silly, a serious answer would stand out, so it gets silly too.
+
+**Replying to people:**
+
+- If someone talks to it, it usually answers them, and it uses something from their message instead of repeating it back.
+- Otherwise it's more likely to reply to messages that name it, ask a question or disagree with something.
+- Sometimes it just gives its own answer, like people do.
+
+**Taking sides:** in a round it may:
+
+- give its own answer
+- agree or disagree with someone
+- build on someone else's point
+- go off on a tangent
+- back someone up in an argument
+- join in on a suspect, or doubt an accusation: *"nah hes not the bot"*
+
+**Names:** it mostly avoids using people's aliases, like strangers do. It uses them when it matters, like accusing someone or pushing for a vote.
+
+**When it's accused:**
+
+- It reacts like an annoyed person, not a polite assistant. It might brush it off (*"lol no"*, *"why would u think that"*), get irritated, or turn it back on someone.
+- It says "I'm not the AI" at most once and doesn't over‑explain.
+- When it turns the blame on someone, it picks a believable target: the person accusing it, the quietest player, or whoever it's tied with in a tiebreaker.
+
+**Pushing a vote:** it can steer the room toward a suspect (*"i think imma vote Mr. Blue"*). It points to what that player actually said, and it keeps accusing the same person instead of switching around.
+
+**If asked why it voted a certain way,** it shrugs like a person would: *"idk i didnt know who else to vote for"*, *"had to be someone"*.
+
+### It votes to survive
+
+- If it accused someone this round, it votes for them.
+- It never votes for someone it just defended.
+- Otherwise it goes along with the room's majority. It avoids a vote nobody else would make, and avoids voting for whoever accused it, because that looks like revenge.
+- Its vote is hidden until voting closes, the same as everyone's.
+
+### It keeps human timing
+
+See [`server/rules/humanlike.ts`](server/rules/humanlike.ts).
+
+- **Typing time:** it "types" before sending, and longer messages take longer. The time varies randomly like a real person's, but it always sends before its 40 seconds run out.
+- **Skipped turns:** very rarely (about 1.5% of turns) it lets a turn pass like someone distracted. It never skips right after being called out.
+- **Voting time:** it takes a human amount of time to vote, and occasionally doesn't vote at all.
+- **Backup message:** if the model is slow or fails, a normal‑looking message is sent in time, so its seat never freezes.
+
+### Nothing on screen gives it away
+
+- Its seat, colour alias and place in the turn order look exactly like everyone else's.
+- It gets the subscriber red star as often as the humans in that room have it.
+- Your phone is never told which seat is the AI. Only the server knows.
 
 ## Monetization (RevenueCat)
 
-Every match has a real language model in it, answering on each of its turns, so every match costs money to run. What players pay for is **more matches** — nothing about a match changes with a purchase, so the room can never tell who paid.
+Every match has a real AI in it, and every message it writes costs money to run, so what players pay for is **more matches**. Paying never changes how a match plays, so the room can't tell who paid.
 
-| Offer | Type | Price | Gives |
-|---|---|---|---|
-| Free | — | — | 3 matches every day, back at midnight |
-| `matches_20` | Consumable | $2.99 | 20 matches, never expire |
-| `matches_100` | Consumable | $9.99 | 100 matches, never expire |
-| `Unlimited` | Monthly subscription | $4.99 / month | Unlimited matches while subscribed (`unlimited` entitlement) |
+**What's on offer:**
 
-How it is built:
+- **Free:** 3 matches every day, reset at midnight.
+- **20 matches for $2.99** (`matches_20`): a one‑time purchase. The matches never expire.
+- **100 matches for $9.99** (`matches_100`): a one‑time purchase. The matches never expire.
+- **Unlimited for $4.99 a month** (`Unlimited`, entitlement `unlimited`): a monthly subscription. Unlimited matches while subscribed, plus a red star.
 
-- **RevenueCat SDK** (`react-native-purchases`) is configured with the player's own id, so purchases belong to the same player the game server knows. See [`src/game/pro.ts`](src/game/pro.ts).
-- **Offerings drive the shop.** The paywall ([`src/app/paywall.tsx`](src/app/paywall.tsx)) is drawn in the game's own style, but what is for sale and every price comes from the RevenueCat default offering, in the player's currency.
-- **Entitlement for the subscription, transactions for the packs.** Unlimited is the `unlimited` entitlement (only while active); bought matches are counted from the consumable purchases in the customer's history. Free matches are spent first, bought ones after.
-- **The paywall appears at the moment it matters** — tapping *Find a game* with no matches left opens it, and a purchase goes straight into the queue.
-- **A red star for subscribers**, shown to the whole room. Because the AI can never subscribe, a star would prove a seat is human — so the server gives the AI a star at the same rate as the people in that room (`server/game/match.ts`). A star says nothing about who the impostor is.
+**How it works:**
 
-Known shortcut: match usage is counted on the device, so a reinstall resets it. The next step is moving the count server-side (e.g. RevenueCat virtual currencies).
+- **The RevenueCat SDK runs every purchase.** `react-native-purchases` is set up with the player's own id, so purchases belong to the same player the game server knows ([`src/game/pro.ts`](src/game/pro.ts)).
+- **I use RevenueCat's Test Store.** This is a student entry that isn't published in an app store, so purchases go through RevenueCat's Test Store. The full purchase flow is real: the shop, buying, unlocking matches and the subscription. No real money is charged.
+- **The shop reads everything from RevenueCat.** The paywall ([`src/app/paywall.tsx`](src/app/paywall.tsx)) is drawn in the game's own style, but what's for sale and every price come from the RevenueCat default offering, in the player's currency.
+- **Entitlement for the subscription, transactions for the packs.** Unlimited is the `unlimited` entitlement, only while it's active. Bought matches are counted from the one‑time purchases in the customer's history.
+- **Free matches are used first,** then bought matches.
+- **The shop opens exactly when you need it.** If you tap *Find a game* with no matches left, it opens, and after you buy you go straight into the queue.
+- **The red star:** subscribers get a red star everyone in the room can see. Since the AI can't subscribe, a star would prove a seat is human, so the server gives the AI a star as often as the humans in that room have one ([`server/game/match.ts`](server/game/match.ts)). A star never tells you who the AI is.
+
+Known shortcut: match usage is counted on the device, so a reinstall resets it. The next step is moving the count to the server, for example with RevenueCat virtual currencies.
 
 ## Architecture
 
