@@ -4,7 +4,7 @@
 
 An online social deduction game for Android. You're matched with strangers in a small chat room, and one of them is an AI pretending to be one of you. Find the machine and vote it out before it outlasts you.
 
-Built with Expo (React Native) for [RevenueCat Shipaton 2026](https://revenuecat-shipaton-2026.devpost.com/).
+Built with Expo (React Native).
 
 ## Everything runs on a server
 
@@ -206,31 +206,7 @@ See [`server/rules/humanlike.ts`](server/rules/humanlike.ts).
 ### Nothing on screen gives it away
 
 - Its seat, colour alias and place in the turn order look exactly like everyone else's.
-- It gets the subscriber red star as often as the humans in that room have it.
 - Your phone is never told which seat is the AI. Only the server knows.
-
-## Monetization (RevenueCat)
-
-Every match has a real AI in it, and every message it writes costs money to run, so what players pay for is **more matches**. Paying never changes how a match plays, so the room can't tell who paid.
-
-**What's on offer:**
-
-- **Free:** 3 matches every day, reset at midnight.
-- **20 matches for $2.99** (`matches_20`): a one‑time purchase. The matches never expire.
-- **100 matches for $9.99** (`matches_100`): a one‑time purchase. The matches never expire.
-- **Unlimited for $4.99 a month** (`Unlimited`, entitlement `unlimited`): a monthly subscription. Unlimited matches while subscribed, plus a red star.
-
-**How it works:**
-
-- **The RevenueCat SDK runs every purchase.** `react-native-purchases` is set up with the player's own id, so purchases belong to the same player the game server knows ([`src/game/pro.ts`](src/game/pro.ts)).
-- **I use RevenueCat's Test Store.** This is a student entry that isn't published in an app store, so purchases go through RevenueCat's Test Store. The full purchase flow is real: the shop, buying, unlocking matches and the subscription. No real money is charged.
-- **The shop reads everything from RevenueCat.** The paywall ([`src/app/paywall.tsx`](src/app/paywall.tsx)) is drawn in the game's own style, but what's for sale and every price come from the RevenueCat default offering, in the player's currency.
-- **Entitlement for the subscription, transactions for the packs.** Unlimited is the `unlimited` entitlement, only while it's active. Bought matches are counted from the one‑time purchases in the customer's history.
-- **Free matches are used first,** then bought matches.
-- **The shop opens exactly when you need it.** If you tap *Find a game* with no matches left, it opens, and after you buy you go straight into the queue.
-- **The red star:** subscribers get a red star everyone in the room can see. Since the AI can't subscribe, a star would prove a seat is human, so the server gives the AI a star as often as the humans in that room have one ([`server/game/match.ts`](server/game/match.ts)). A star never tells you who the AI is.
-
-Known shortcut: match usage is counted on the device, so a reinstall resets it. The next step is moving the count to the server, for example with RevenueCat virtual currencies.
 
 ## Architecture
 
@@ -238,7 +214,7 @@ Known shortcut: match usage is counted on the device, so a reinstall resets it. 
 ┌──────────────┐   WebSocket /game   ┌─────────────────────────────┐   HTTPS   ┌────────────┐
 │  Expo app     │ ─────────────────▶ │  Game server (Node, ws)      │ ────────▶ │ OpenRouter │
 │  (phones)     │ ◀───────────────── │  matchmaking · match rules   │           │  (the AI)  │
-│  RevenueCat   │   room, filtered   │  timers · the impostor seat  │           └────────────┘
+│               │   room, filtered   │  timers · the impostor seat  │           └────────────┘
 └──────────────┘   per player        └─────────────────────────────┘
 ```
 
@@ -249,7 +225,7 @@ Known shortcut: match usage is counted on the device, so a reinstall resets it. 
 
 ## Run it yourself
 
-Requirements: Node 22.13+, an [OpenRouter](https://openrouter.ai) API key for the AI, and for purchases a [RevenueCat](https://www.revenuecat.com) project.
+Requirements: Node 22.13+, an [OpenRouter](https://openrouter.ai) API key for the AI.
 
 ### 1. Install and configure
 
@@ -263,7 +239,6 @@ Fill in `.env`:
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-...                        # the server's key for the AI
 EXPO_PUBLIC_GAME_URL=ws://<your-computer's-LAN-IP>:8787/game
-EXPO_PUBLIC_REVENUECAT_API_KEY=test_...               # optional, see step 4
 ```
 
 ### 2. Start the game server
@@ -282,30 +257,13 @@ npx expo start
 
 A match needs 2–4 people queueing for the same room size, so use two phones or a phone and an emulator. Without `EXPO_PUBLIC_GAME_URL`, a development build plays the whole match on one device against bots.
 
-### 4. Purchases (optional)
-
-Real purchases need a **development build** — Expo Go only mocks RevenueCat, so the app switches the paywall and the match limit off there.
-
-```bash
-npx eas build --profile development --platform android
-```
-
-In the RevenueCat dashboard, with a **Test Store** app:
-
-1. Create the products `matches_20` and `matches_100` (consumable) and `Unlimited` (monthly subscription).
-2. Create the entitlement `unlimited` and attach only the subscription to it.
-3. Add all three to the **default** offering.
-4. Put the Test Store public key in `EXPO_PUBLIC_REVENUECAT_API_KEY`.
-
-Test Store keys must never ship in a store build.
-
 ## Tests
 
 ```bash
 npm test
 ```
 
-Covers the match rules, what each phone is allowed to see, reconnects, matchmaking, penalties, the impostor's prompts and the red star's fairness.
+Covers the match rules, what each phone is allowed to see, reconnects, matchmaking, penalties and the impostor's prompts.
 
 ## License
 

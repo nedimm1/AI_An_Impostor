@@ -232,13 +232,7 @@ export function AnswerBubble({
       <View style={[styles.row, styles.rowOthers]}>
         <View style={styles.gutter}>
           {author ? (
-            <Avatar
-              id={author.id}
-              name={author.name}
-              tint={author.tint}
-              size={AVATAR}
-              star={author.star}
-            />
+            <Avatar id={author.id} name={author.name} tint={author.tint} size={AVATAR} />
           ) : null}
         </View>
 

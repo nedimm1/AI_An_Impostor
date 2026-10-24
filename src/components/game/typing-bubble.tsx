@@ -39,13 +39,7 @@ export function TypingBubble({ player }: { player: Player }) {
       style={styles.row}
       accessibilityRole="text"
       accessibilityLabel={`${player.name} is answering`}>
-      <Avatar
-        id={player.id}
-        name={player.name}
-        tint={player.tint}
-        size={AVATAR}
-        star={player.star}
-      />
+      <Avatar id={player.id} name={player.name} tint={player.tint} size={AVATAR} />
       <View style={styles.column}>
         <ThemedText
           type="smallBold"

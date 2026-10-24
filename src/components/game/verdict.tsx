@@ -101,14 +101,7 @@ export function VerdictHero({ room }: { room: Room }) {
               </ThemedText>
             ) : null}
             <View style={styles.tiedSeat}>
-              <Avatar
-                id={p.id}
-                name={p.name}
-                tint={p.tint}
-                size={72}
-                ringColor={Colors.warning}
-                star={p.star}
-              />
+              <Avatar id={p.id} name={p.name} tint={p.tint} size={72} ringColor={Colors.warning} />
               <ThemedText type="smallBold" numberOfLines={1} style={{ color: p.tint }}>
                 {p.isYou ? 'You' : p.name}
               </ThemedText>
@@ -257,7 +250,7 @@ export function VoteBreakdown({ room }: { room: Room }) {
               {isImpostor ? (
                 <RobotFace room={room} tint={tint} size={40} />
               ) : (
-                <Avatar id={player.id} name={player.name} tint={tint} size={40} star={player.star} />
+                <Avatar id={player.id} name={player.name} tint={tint} size={40} />
               )}
 
               <View style={styles.rowBody}>
@@ -354,14 +347,7 @@ export function VoteBreakdown({ room }: { room: Room }) {
           <View style={styles.list}>
             {departed.map((player, i) => (
               <View key={player.id} style={[styles.row, i > 0 && styles.rowDivider]}>
-                <Avatar
-                  id={player.id}
-                  name={player.name}
-                  tint={player.tint}
-                  size={32}
-                  dimmed
-                  star={player.star}
-                />
+                <Avatar id={player.id} name={player.name} tint={player.tint} size={32} dimmed />
                 <ThemedText type="body" themeColor="textSecondary" style={styles.rowName}>
                   {player.isYou ? 'You' : player.name}
                 </ThemedText>
