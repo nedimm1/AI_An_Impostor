@@ -10,6 +10,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ConnectionBanner } from '@/components/game/connection-banner';
 import { Colors } from '@/constants/theme';
 import { RoomProvider, useRoomStore } from '@/game/store';
+import { useMatchAnalytics } from '@/hooks/use-match-analytics';
+import { useScreenTracking } from '@/hooks/use-screen-tracking';
 
 // Held over the one disk read that decides whether this is a returning player.
 // Without it, somebody who already has a name gets the home screen behaving as
@@ -49,6 +51,8 @@ export default function RootLayout() {
  */
 function Routes() {
   const { hydrated } = useRoomStore();
+  useScreenTracking();
+  useMatchAnalytics();
 
   useEffect(() => {
     if (hydrated) SplashScreen.hideAsync();

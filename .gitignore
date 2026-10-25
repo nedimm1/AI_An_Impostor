@@ -44,6 +44,10 @@ yarn-error.*
 
 example
 
+# Firebase config. Kept out of the repo; EAS builds get it from the
+# GOOGLE_SERVICES_JSON file variable (see app.config.js).
+google-services.json
+
 # generated native folders
 /ios
 /android
